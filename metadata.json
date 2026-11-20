@@ -1,0 +1,6 @@
+{
+  "name": "SRPK Enterprise Estate",
+  "description": "Multi-property residential estate management for 12 units across Bengaluru and Chennai with BESCOM/TNEB meter capture, WhatsApp & UPI invoicing, tenant lifecycle workflows, and 2-way Google Sheets sync.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

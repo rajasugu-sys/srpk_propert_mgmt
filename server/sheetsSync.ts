@@ -12,8 +12,8 @@ export type SyncTable =
 
 export const HARDCODED_SPREADSHEET_ID = '1rV0SGO7fB5BB56xa3dmhL1eicYQF68hekT2rrSMswD0';
 const SERVICE_ACCOUNT_EMAIL =
-  process.env.VITE_GOOGLE_SERVICE_ACCOUNT_EMAIL?.trim() ||
   process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL?.trim() ||
+  process.env.VITE_GOOGLE_SERVICE_ACCOUNT_EMAIL?.trim() ||
   'srkp-property-id@gen-lang-client-0777079345.iam.gserviceaccount.com';
 
 const GOOGLE_SHEETS_SCOPE = 'https://www.googleapis.com/auth/spreadsheets';
@@ -220,6 +220,17 @@ interface ParsedSaCreds {
   token_uri?: string;
 }
 
+function normalizePemPrivateKey(raw: string): string {
+  let cleaned = raw.trim();
+  if (
+    (cleaned.startsWith('"') && cleaned.endsWith('"')) ||
+    (cleaned.startsWith("'") && cleaned.endsWith("'"))
+  ) {
+    cleaned = cleaned.slice(1, -1).trim();
+  }
+  return cleaned.replace(/\\\\n/g, '\n').replace(/\\n/g, '\n');
+}
+
 function getEnvServiceAccountCreds(): {
   configured: boolean;
   creds?: ParsedSaCreds;
@@ -227,14 +238,18 @@ function getEnvServiceAccountCreds(): {
 } {
   const rawJson = process.env.GOOGLE_SERVICE_ACCOUNT_JSON?.trim();
   const rawPrivateKey = (
-    process.env.VITE_GOOGLE_PRIVATE_KEY ||
     process.env.GOOGLE_PRIVATE_KEY ||
+    process.env.VITE_GOOGLE_PRIVATE_KEY ||
     ''
   ).trim();
 
-  if (rawJson) {
+  const tryParseJsonCreds = (jsonText: string): {
+    configured: boolean;
+    creds?: ParsedSaCreds;
+    error?: string;
+  } => {
     try {
-      const parsed = JSON.parse(rawJson) as Partial<ParsedSaCreds>;
+      const parsed = JSON.parse(jsonText) as Partial<ParsedSaCreds>;
       if (!parsed.private_key || !parsed.private_key.includes('PRIVATE KEY')) {
         return {
           configured: false,
@@ -245,7 +260,7 @@ function getEnvServiceAccountCreds(): {
         configured: true,
         creds: {
           client_email: (parsed.client_email || SERVICE_ACCOUNT_EMAIL).trim(),
-          private_key: parsed.private_key.replace(/\\n/g, '\n'),
+          private_key: normalizePemPrivateKey(parsed.private_key),
           private_key_id: parsed.private_key_id,
           token_uri: parsed.token_uri || DEFAULT_TOKEN_URI,
         },
@@ -256,17 +271,27 @@ function getEnvServiceAccountCreds(): {
         error: 'Server Google Sheets JSON credential is malformed.',
       };
     }
+  };
+
+  if (rawJson) {
+    return tryParseJsonCreds(rawJson);
   }
 
-  if (rawPrivateKey && rawPrivateKey.includes('PRIVATE KEY')) {
-    return {
-      configured: true,
-      creds: {
-        client_email: SERVICE_ACCOUNT_EMAIL,
-        private_key: rawPrivateKey.replace(/\\n/g, '\n'),
-        token_uri: DEFAULT_TOKEN_URI,
-      },
-    };
+  if (rawPrivateKey) {
+    if (rawPrivateKey.startsWith('{')) {
+      return tryParseJsonCreds(rawPrivateKey);
+    }
+    const normalizedKey = normalizePemPrivateKey(rawPrivateKey);
+    if (normalizedKey.includes('PRIVATE KEY')) {
+      return {
+        configured: true,
+        creds: {
+          client_email: SERVICE_ACCOUNT_EMAIL,
+          private_key: normalizedKey,
+          token_uri: DEFAULT_TOKEN_URI,
+        },
+      };
+    }
   }
 
   return { configured: false };

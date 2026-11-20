@@ -203,20 +203,8 @@ function getClientEnvCredentials(): {
   email: string;
   privateKey: string;
 } {
-  const email = (import.meta.env.VITE_GOOGLE_SERVICE_ACCOUNT_EMAIL || '').trim();
-  const rawKey = (import.meta.env.VITE_GOOGLE_PRIVATE_KEY || '').trim();
-  const privateKey = rawKey.replace(/\\n/g, '\n');
-
-  const configured = Boolean(
-    email &&
-      privateKey &&
-      privateKey.includes('BEGIN') &&
-      privateKey.includes('PRIVATE KEY') &&
-      typeof crypto !== 'undefined' &&
-      Boolean(crypto.subtle)
-  );
-
-  return { configured, email, privateKey };
+  // Service account private keys are kept strictly server-side (/api/sheets/*)
+  return { configured: false, email: '', privateKey: '' };
 }
 
 function base64UrlFromBytes(bytes: Uint8Array): string {

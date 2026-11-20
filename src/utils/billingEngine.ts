@@ -1,4 +1,4 @@
-import { InvoiceRecord, TenantRecord } from '../types/estate';
+import type { InvoiceRecord, TenantRecord } from '../types/estate.ts';
 
 export function formatINR(amount: number): string {
   return new Intl.NumberFormat('en-IN', {

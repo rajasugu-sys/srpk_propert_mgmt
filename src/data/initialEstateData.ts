@@ -1,4 +1,4 @@
-import {
+import type {
   AppSettings,
   EstateDataset,
   ExpenseRecord,
@@ -10,8 +10,8 @@ import {
   TenantRecord,
   Unit,
   UtilityReading,
-} from '../types/estate';
-import { buildUpiPaymentLink, isInvoiceLockedStatus } from '../utils/billingEngine';
+} from '../types/estate.ts';
+import { buildUpiPaymentLink, isInvoiceLockedStatus } from '../utils/billingEngine.ts';
 
 export const DEFAULT_APP_SETTINGS: AppSettings = {
   merchant_upi_id: 'srpk.estate@okicici',

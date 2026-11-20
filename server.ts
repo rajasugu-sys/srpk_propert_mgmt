@@ -1,5 +1,6 @@
 import 'dotenv/config';
-import express, { Request, Response } from 'express';
+import express from 'express';
+import type { Request, Response } from 'express';
 import fs from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -10,17 +11,16 @@ import {
   pullAllFromSheetServer,
   pushAllTablesServer,
   REQUIRED_SHEET_TABS,
-  ServerDatasetPayload,
   syncTableServer,
-  SyncTable,
   testConnectionAndSyncServer,
-} from './server/sheetsSync.js';
-import { INITIAL_ESTATE_DATASET } from './src/data/initialEstateData.js';
+} from './server/sheetsSync.ts';
+import type { ServerDatasetPayload, SyncTable } from './server/sheetsSync.ts';
+import { INITIAL_ESTATE_DATASET } from './src/data/initialEstateData.ts';
 import type {
   EstateDataset,
   MaintenanceRequest,
   RequestCategory,
-} from './src/types/estate.js';
+} from './src/types/estate.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);

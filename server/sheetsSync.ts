@@ -8,7 +8,9 @@ export type SyncTable =
   | 'UtilityReadings'
   | 'Invoices'
   | 'Expenses'
-  | 'Requests';
+  | 'Requests'
+  | 'Users'
+  | 'AppConfig';
 
 export const HARDCODED_SPREADSHEET_ID = '1rV0SGO7fB5BB56xa3dmhL1eicYQF68hekT2rrSMswD0';
 const SERVICE_ACCOUNT_EMAIL =
@@ -29,6 +31,8 @@ export const REQUIRED_SHEET_TABS: SyncTable[] = [
   'Invoices',
   'Expenses',
   'Requests',
+  'Users',
+  'AppConfig',
 ];
 
 export const TAB_HEADERS: Record<SyncTable, string[]> = {
@@ -173,6 +177,22 @@ export const TAB_HEADERS: Record<SyncTable, string[]> = {
     'resolved_at',
     'resolution_note',
   ],
+  Users: [
+    'user_id',
+    'full_name',
+    'email',
+    'mobile_number',
+    'access_type',
+    'access_status',
+    'must_reset_password',
+    'tenant_id',
+    'unit_id',
+    'password_salt',
+    'password_hash',
+    'created_at',
+    'updated_at',
+  ],
+  AppConfig: ['key', 'value', 'updated_at'],
 };
 
 export interface ServerTabStatus {
@@ -820,6 +840,8 @@ export interface ServerDatasetPayload {
   invoices: unknown[];
   expenses?: unknown[];
   requests?: unknown[];
+  users?: unknown[];
+  appConfig?: unknown[];
 }
 
 export async function pushAllTablesServer(
@@ -892,6 +914,8 @@ export async function pushAllTablesServer(
       Invoices: dataset.invoices || [],
       Expenses: dataset.expenses || [],
       Requests: dataset.requests || [],
+      Users: dataset.users || [],
+      AppConfig: dataset.appConfig || [],
     };
 
     for (const tab of REQUIRED_SHEET_TABS) {
@@ -996,6 +1020,8 @@ export async function pullAllFromSheetServer(): Promise<{
     Invoices: [],
     Expenses: [],
     Requests: [],
+    Users: [],
+    AppConfig: [],
   };
 
   const tokenRes = await getGoogleSheetsAccessToken();

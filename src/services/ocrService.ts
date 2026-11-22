@@ -30,14 +30,26 @@ function fileToBase64(file: File): Promise<string> {
   });
 }
 
+import { AUTH_SESSION_STORAGE_KEY, getAuthFetchHeaders } from '../config/authConfig';
+
 export async function extractBillOrMeterWithGemini(
   file: File,
   mode: 'eb_bill' | 'common_eb' | 'water_meter'
 ): Promise<EbOcrResult | WaterMeterOcrResult> {
   const imageBase64 = await fileToBase64(file);
+  let authToken: string | undefined;
+  try {
+    const raw = sessionStorage.getItem(AUTH_SESSION_STORAGE_KEY);
+    if (raw) {
+      authToken = (JSON.parse(raw) as { authToken?: string }).authToken;
+    }
+  } catch {
+    // ignore storage errors
+  }
+
   const res = await fetch('/api/ocr/extract', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: getAuthFetchHeaders(authToken, { 'Content-Type': 'application/json' }),
     body: JSON.stringify({
       imageBase64,
       mimeType: file.type || 'image/jpeg',

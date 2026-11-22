@@ -747,5 +747,6 @@ export const INITIAL_ESTATE_DATASET: EstateDataset = {
   invoices: INITIAL_INVOICES,
   expenses: INITIAL_EXPENSES,
   requests: INITIAL_REQUESTS,
+  users: [],
   settings: DEFAULT_APP_SETTINGS,
 };

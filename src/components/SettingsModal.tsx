@@ -6,10 +6,14 @@ import {
   ArrowUpToLine,
   Check,
   CheckCircle2,
+  Copy,
   ExternalLink,
+  Eye,
+  EyeOff,
   FileSpreadsheet,
   Fingerprint,
   KeyRound,
+  RefreshCw,
   RotateCcw,
   Save,
   Trash2,
@@ -18,10 +22,10 @@ import {
 } from 'lucide-react';
 import {
   AUTO_LOCK_OPTIONS,
+  fetchMasterAdminPin,
   loadAutoLockTimerMode,
-  persistCredentialsCache,
-  resolveEffectiveCredentials,
   saveAutoLockTimerMode,
+  updateMasterAdminPin,
 } from '../config/authConfig';
 import {
   isBiometricEnrolledForUser,
@@ -34,7 +38,7 @@ import {
   SPREADSHEET_ID,
   SPREADSHEET_URL,
 } from '../services/googleSheetsSync';
-import {
+import type {
   AppSettings,
   AuthSession,
   AutoLockTimerMode,
@@ -80,15 +84,17 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [upiId, setUpiId] = useState(settings.merchant_upi_id);
   const [merchantName, setMerchantName] = useState(settings.merchant_name);
   const [ownerPhone, setOwnerPhone] = useState(settings.owner_whatsapp_phone || '+91');
-
-  const effectiveCreds = resolveEffectiveCredentials(settings.auth_credentials);
-  const [owner1Username, setOwner1Username] = useState(effectiveCreds.Owner1.username);
-  const [owner1Pin, setOwner1Pin] = useState(effectiveCreds.Owner1.pin);
-  const [owner2Username, setOwner2Username] = useState(effectiveCreds.Owner2.username);
-  const [owner2Pin, setOwner2Pin] = useState(effectiveCreds.Owner2.pin);
   const [autoLockTimer, setAutoLockTimer] = useState<AutoLockTimerMode>(
     settings.auto_lock_timer || loadAutoLockTimerMode()
   );
+
+  // Admin-Only 12-Char Master Admin PIN State
+  const [masterPin, setMasterPin] = useState(settings.master_admin_pin || '');
+  const [customMasterPinInput, setCustomMasterPinInput] = useState('');
+  const [showMasterPin, setShowMasterPin] = useState(false);
+  const [copiedMasterPin, setCopiedMasterPin] = useState(false);
+  const [masterPinBusy, setMasterPinBusy] = useState(false);
+  const [masterPinStatus, setMasterPinStatus] = useState<string | null>(null);
 
   const [savedNotice, setSavedNotice] = useState<string | null>(null);
   const [accessError, setAccessError] = useState<string | null>(null);
@@ -99,24 +105,33 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [biometricMsg, setBiometricMsg] = useState<string | null>(null);
 
   useEffect(() => {
+    if (!isOpen) return;
     setUpiId(settings.merchant_upi_id);
     setMerchantName(settings.merchant_name);
     setOwnerPhone(settings.owner_whatsapp_phone || '+91');
     setAutoLockTimer(settings.auto_lock_timer || loadAutoLockTimerMode());
-    const resolved = resolveEffectiveCredentials(settings.auth_credentials);
-    setOwner1Username(resolved.Owner1.username);
-    setOwner1Pin(resolved.Owner1.pin);
-    setOwner2Username(resolved.Owner2.username);
-    setOwner2Pin(resolved.Owner2.pin);
+    setMasterPin(settings.master_admin_pin || '');
+    setCustomMasterPinInput(settings.master_admin_pin || '');
     setConfirmPushAll(false);
     setSavedNotice(null);
     setAccessError(null);
+    setMasterPinStatus(null);
     setBiometricMsg(null);
-    setBiometricEnrolled(isBiometricEnrolledForUser(session.username));
+    setBiometricEnrolled(isBiometricEnrolledForUser(session.userId));
     void isPlatformBiometricSupported().then(setBiometricSupported);
-  }, [settings, isOpen, session.username]);
 
-  if (!isOpen) return null;
+    if (session.accessType === 'admin' && session.authToken) {
+      void fetchMasterAdminPin(session.authToken).then((res) => {
+        if (res.ok) {
+          setMasterPin(res.masterAdminPin);
+          setCustomMasterPinInput(res.masterAdminPin);
+        }
+      });
+    }
+  }, [settings, isOpen, session.userId, session.accessType, session.authToken]);
+
+  // Strict Admin-Only Guard
+  if (!isOpen || session.accessType !== 'admin') return null;
 
   const isConnected = Boolean(
     diagnostics?.connected || (secretConfigured && settings.last_synced_at)
@@ -125,34 +140,64 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     ? new Date(settings.last_synced_at).toLocaleString()
     : 'Never synced';
 
+  const handleCopyMasterPin = async () => {
+    if (!masterPin) return;
+    try {
+      await navigator.clipboard.writeText(masterPin);
+      setCopiedMasterPin(true);
+      setTimeout(() => setCopiedMasterPin(false), 1800);
+    } catch {
+      // ignore clipboard errors
+    }
+  };
+
+  const handleGenerateMasterPin = async () => {
+    if (!session.authToken) return;
+    setMasterPinBusy(true);
+    setMasterPinStatus(null);
+    setAccessError(null);
+    const res = await updateMasterAdminPin(session.authToken, { mode: 'generate' });
+    setMasterPinBusy(false);
+    if (!res.ok) {
+      setAccessError('error' in res ? res.error : 'Could not rotate Master Admin PIN.');
+      return;
+    }
+    setMasterPin(res.masterAdminPin);
+    setCustomMasterPinInput(res.masterAdminPin);
+    setMasterPinStatus('New 12-character Master Admin PIN generated & synced to Sheets.');
+    onSaveSettings({ ...settings, master_admin_pin: res.masterAdminPin });
+  };
+
+  const handleSaveCustomMasterPin = async () => {
+    if (!session.authToken) return;
+    const clean = customMasterPinInput.trim().toUpperCase();
+    if (!/^[A-Za-z0-9]{12}$/.test(clean)) {
+      setAccessError(
+        'Master Admin PIN must be exactly 12 alphanumeric characters (A-Z, 0-9).'
+      );
+      return;
+    }
+    setMasterPinBusy(true);
+    setMasterPinStatus(null);
+    setAccessError(null);
+    const res = await updateMasterAdminPin(session.authToken, {
+      mode: 'custom',
+      customPin: clean,
+    });
+    setMasterPinBusy(false);
+    if (!res.ok) {
+      setAccessError('error' in res ? res.error : 'Could not save Master Admin PIN.');
+      return;
+    }
+    setMasterPin(res.masterAdminPin);
+    setCustomMasterPinInput(res.masterAdminPin);
+    setMasterPinStatus('Master Admin PIN updated & synced to Sheets.');
+    onSaveSettings({ ...settings, master_admin_pin: res.masterAdminPin });
+  };
+
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
     setAccessError(null);
-
-    const trimmedOwner1User = owner1Username.trim();
-    const trimmedOwner1Pin = owner1Pin.trim();
-    const trimmedOwner2User = owner2Username.trim();
-    const trimmedOwner2Pin = owner2Pin.trim();
-
-    if (!trimmedOwner1User || !trimmedOwner2User) {
-      setAccessError('Both Owner usernames/emails are required.');
-      return;
-    }
-    if (trimmedOwner1User.toLowerCase() === trimmedOwner2User.toLowerCase()) {
-      setAccessError('Owner 1 and Owner 2 must use distinct usernames/emails.');
-      return;
-    }
-    if (trimmedOwner1Pin.length < 4 || trimmedOwner2Pin.length < 4) {
-      setAccessError('PIN / password must be at least 4 characters for both Owners.');
-      return;
-    }
-
-    const updatedCreds = {
-      Owner1: { username: trimmedOwner1User, pin: trimmedOwner1Pin },
-      Owner2: { username: trimmedOwner2User, pin: trimmedOwner2Pin },
-    };
-
-    persistCredentialsCache(updatedCreds);
     saveAutoLockTimerMode(autoLockTimer);
 
     onSaveSettings({
@@ -160,20 +205,20 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       merchant_upi_id: upiId.trim() || settings.merchant_upi_id,
       merchant_name: merchantName.trim() || settings.merchant_name,
       owner_whatsapp_phone: ownerPhone.trim() || settings.owner_whatsapp_phone,
-      auth_credentials: updatedCreds,
       auto_lock_timer: autoLockTimer,
+      master_admin_pin: masterPin || settings.master_admin_pin,
     });
-    setSavedNotice('Settings and Owner credentials saved.');
+    setSavedNotice('Settings saved.');
     setTimeout(() => setSavedNotice(null), 3000);
   };
 
   const handleEnrollBiometric = async () => {
     setBiometricMsg(null);
-    const res = await registerPlatformBiometric(session.username);
+    const res = await registerPlatformBiometric(session.userId, session.fullName);
     if (res.ok) {
       setBiometricEnrolled(true);
       setBiometricMsg(
-        `Face ID / Fingerprint quick login enabled for ${session.username}.`
+        `Face ID / Fingerprint quick login enabled for ${session.fullName}.`
       );
     } else {
       setBiometricMsg('error' in res ? res.error : 'Biometric enrollment failed.');
@@ -181,9 +226,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   };
 
   const handleRemoveBiometric = () => {
-    removeBiometricForUser(session.username);
+    removeBiometricForUser(session.userId);
     setBiometricEnrolled(false);
-    setBiometricMsg(`Removed biometric quick login for ${session.username} on this device.`);
+    setBiometricMsg(
+      `Removed biometric quick login for ${session.fullName} on this device.`
+    );
   };
 
   return (
@@ -204,10 +251,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 id="settings-modal-title"
                 className="text-base sm:text-lg font-bold text-[#0f172a] leading-tight"
               >
-                Google Sheets Sync &amp; Owner Settings
+                Admin Settings &amp; Google Sheets Sync
               </h2>
               <p className="text-xs text-slate-500 mt-0.5">
-                Silent automated sync, UPI payment defaults, and Owner access PINs
+                Sync tables, UPI payment defaults, and 12-char Master Admin PIN
               </p>
             </div>
           </div>
@@ -256,7 +303,100 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           </div>
         </section>
 
-        {/* Clean Google Sheets Sync Status & Actions (Zero credentials exposed) */}
+        {/* Master Admin PIN Management (Admins Only) */}
+        <section className="rounded-xl border border-amber-200 bg-amber-50/70 p-3.5 sm:p-4 space-y-3">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <KeyRound className="w-4 h-4 text-amber-700" />
+              <h3 className="text-xs font-bold text-[#0f172a]">
+                Master Admin PIN (12-Char Alphanumeric)
+              </h3>
+            </div>
+            <span className="rounded-md bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-900">
+              Admins Only
+            </span>
+          </div>
+
+          <p className="text-[11px] text-slate-600 leading-relaxed">
+            Required when new users sign up with <strong>Admin</strong> access. Viewers and Tenants never see this PIN.
+          </p>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="flex-1 min-w-[180px] flex items-center justify-between rounded-lg border border-amber-300 bg-white px-3 py-2">
+              <span className="font-mono text-sm font-bold tracking-widest text-[#0f172a]">
+                {showMasterPin ? masterPin || '••••••••••••' : '••••••••••••'}
+              </span>
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => setShowMasterPin((v) => !v)}
+                  className="p-1.5 rounded-md text-slate-500 hover:bg-slate-100 cursor-pointer"
+                  aria-label={showMasterPin ? 'Hide Master PIN' : 'Show Master PIN'}
+                >
+                  {showMasterPin ? (
+                    <EyeOff className="w-4 h-4" />
+                  ) : (
+                    <Eye className="w-4 h-4" />
+                  )}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleCopyMasterPin()}
+                  className="p-1.5 rounded-md text-slate-500 hover:bg-slate-100 cursor-pointer"
+                  aria-label="Copy Master Admin PIN"
+                >
+                  {copiedMasterPin ? (
+                    <Check className="w-4 h-4 text-[#489E44]" />
+                  ) : (
+                    <Copy className="w-4 h-4" />
+                  )}
+                </button>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              disabled={masterPinBusy}
+              onClick={() => void handleGenerateMasterPin()}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-[#0f172a] px-3 py-2.5 text-xs font-semibold text-white hover:bg-slate-800 disabled:opacity-50 cursor-pointer min-h-[40px]"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${masterPinBusy ? 'animate-spin' : ''}`} />
+              <span>Generate New PIN</span>
+            </button>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <input
+              type="text"
+              maxLength={12}
+              value={customMasterPinInput}
+              onChange={(e) =>
+                setCustomMasterPinInput(
+                  e.target.value.replace(/[^A-Za-z0-9]/g, '').toUpperCase()
+                )
+              }
+              placeholder="Set custom 12-char alphanumeric PIN"
+              className="flex-1 min-w-[200px] rounded-lg border border-amber-200 bg-white px-3 py-2 text-xs font-mono uppercase tracking-wider text-[#0f172a] min-h-[40px]"
+            />
+            <button
+              type="button"
+              disabled={masterPinBusy}
+              onClick={() => void handleSaveCustomMasterPin()}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-amber-300 bg-white px-3 py-2 text-xs font-bold text-amber-900 hover:bg-amber-100 disabled:opacity-50 cursor-pointer min-h-[40px]"
+            >
+              <Save className="w-3.5 h-3.5" />
+              <span>Save PIN</span>
+            </button>
+          </div>
+
+          {masterPinStatus && (
+            <div className="text-[11px] font-semibold text-[#3E8E41]">
+              {masterPinStatus}
+            </div>
+          )}
+        </section>
+
+        {/* Clean Google Sheets Sync Status & Actions */}
         <section className="rounded-xl border border-[#e2e8f0] bg-white p-3.5 sm:p-4 space-y-3.5">
           <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-slate-100">
             <div className="flex items-center gap-2">
@@ -280,7 +420,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             </div>
           </div>
 
-          {/* Direct Sync Actions */}
           <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
@@ -326,7 +465,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               <div className="flex items-start gap-2 text-xs text-amber-900">
                 <AlertTriangle className="w-4 h-4 text-[#f59e0b] shrink-0 mt-0.5" />
                 <span>
-                  Overwrite all 6 tabs in Google Sheet{' '}
+                  Overwrite all {REQUIRED_SHEET_TABS.length} tabs in Google Sheet{' '}
                   <span className="font-mono font-bold break-all">{SPREADSHEET_ID}</span>{' '}
                   with current local data?
                 </span>
@@ -435,7 +574,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             <div className="flex items-center gap-2 min-w-0">
               <Fingerprint className="w-4 h-4 text-[#489E44] shrink-0" />
               <h3 className="text-xs font-bold text-[#0f172a] truncate">
-                Biometric Quick Login ({session.username})
+                Biometric Quick Login ({session.fullName})
               </h3>
             </div>
             <span
@@ -488,12 +627,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           )}
         </section>
 
-        {/* Owner UPI + Dual-Owner Credentials Form */}
+        {/* UPI & General Preferences Form */}
         <form onSubmit={handleSave} className="space-y-4">
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div>
               <label className="block text-xs font-semibold text-slate-700 mb-1.5">
-                Owner UPI ID (QR / Links)
+                UPI ID (QR / Links)
               </label>
               <input
                 type="text"
@@ -504,7 +643,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             </div>
             <div>
               <label className="block text-xs font-semibold text-slate-700 mb-1.5">
-                Owner / Estate Name
+                Estate / Payee Name
               </label>
               <input
                 type="text"
@@ -515,7 +654,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             </div>
             <div>
               <label className="block text-xs font-semibold text-slate-700 mb-1.5">
-                Owner WhatsApp (Tenure)
+                WhatsApp Phone (Alerts)
               </label>
               <input
                 type="tel"
@@ -546,62 +685,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 </option>
               ))}
             </select>
-          </div>
-
-          {/* Access & PIN Management (Both Owners) */}
-          <div className="rounded-xl border border-[#e2e8f0] bg-[#f8f9ff] p-3.5 sm:p-4 space-y-3">
-            <div className="flex items-center gap-2">
-              <KeyRound className="w-4 h-4 text-[#0f172a]" />
-              <h3 className="text-xs font-bold text-[#0f172a]">
-                Access &amp; PIN Management (Both Co-Owners)
-              </h3>
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div>
-                <label className="block text-[11px] font-semibold text-slate-600 mb-1">
-                  Owner 1 Email / Username
-                </label>
-                <input
-                  type="text"
-                  value={owner1Username}
-                  onChange={(e) => setOwner1Username(e.target.value)}
-                  className="w-full rounded-lg border border-[#e2e8f0] bg-white px-3 py-2 text-xs text-[#0f172a] min-h-[40px]"
-                />
-              </div>
-              <div>
-                <label className="block text-[11px] font-semibold text-slate-600 mb-1">
-                  Owner 1 PIN / Password
-                </label>
-                <input
-                  type="password"
-                  value={owner1Pin}
-                  onChange={(e) => setOwner1Pin(e.target.value)}
-                  className="w-full rounded-lg border border-[#e2e8f0] bg-white px-3 py-2 text-xs font-mono text-[#0f172a] min-h-[40px]"
-                />
-              </div>
-              <div>
-                <label className="block text-[11px] font-semibold text-slate-600 mb-1">
-                  Owner 2 Email / Username
-                </label>
-                <input
-                  type="text"
-                  value={owner2Username}
-                  onChange={(e) => setOwner2Username(e.target.value)}
-                  className="w-full rounded-lg border border-[#e2e8f0] bg-white px-3 py-2 text-xs text-[#0f172a] min-h-[40px]"
-                />
-              </div>
-              <div>
-                <label className="block text-[11px] font-semibold text-slate-600 mb-1">
-                  Owner 2 PIN / Password
-                </label>
-                <input
-                  type="password"
-                  value={owner2Pin}
-                  onChange={(e) => setOwner2Pin(e.target.value)}
-                  className="w-full rounded-lg border border-[#e2e8f0] bg-white px-3 py-2 text-xs font-mono text-[#0f172a] min-h-[40px]"
-                />
-              </div>
-            </div>
           </div>
 
           {accessError && (

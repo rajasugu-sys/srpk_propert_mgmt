@@ -58,7 +58,8 @@ export function isInvoiceLockedStatus(status: InvoiceRecord['payment_status']): 
 
 export function formatWhatsAppInvoiceMessage(
   invoice: InvoiceRecord,
-  upiId: string
+  upiId: string,
+  senderSignature: string = 'SRKP Rental Management'
 ): string {
   const monthLabel = formatBillingMonthLabel(invoice.billing_month);
   const ebModeNote = invoice.eb_paid_to_owner
@@ -115,7 +116,7 @@ export function formatWhatsAppInvoiceMessage(
     `Pay Owner via UPI: *${upiId}*`,
     `UPI Link: ${invoice.upi_link}`,
     ``,
-    `Thank you — SRKP Rental Management`,
+    `Thank you — ${senderSignature}`,
   ];
 
   return lines.join('\n');
@@ -235,8 +236,16 @@ export function formatTenureReminderWhatsApp(params: {
   propertyName: string;
   unitName: string;
   remainingLabel: string;
+  senderSignature?: string;
 }): string {
-  const { recipient, tenant, propertyName, unitName, remainingLabel } = params;
+  const {
+    recipient,
+    tenant,
+    propertyName,
+    unitName,
+    remainingLabel,
+    senderSignature = 'SRKP Rental Management',
+  } = params;
   if (recipient === 'tenant') {
     return [
       `*${propertyName} — Lease / Rental Tenure Expiry Reminder*`,
@@ -248,7 +257,7 @@ export function formatTenureReminderWhatsApp(params: {
       `Kindly confirm if you wish to renew your agreement for the next term or schedule a move-out inspection.`,
       ``,
       `Regards,`,
-      `SRKP Rental Management`,
+      senderSignature,
     ].join('\n');
   }
 
@@ -271,6 +280,7 @@ export function formatWhatsAppPnLReport(params: {
   otherExpenses: number;
   totalExpenses: number;
   netBalance: number;
+  senderSignature?: string;
 }): string {
   const monthLabel = formatBillingMonthLabel(params.month);
   const houseLines = params.houseExpenses.map(
@@ -279,7 +289,7 @@ export function formatWhatsAppPnLReport(params: {
 
   return [
     `*Monthly Financial Summary - ${monthLabel}*`,
-    `SRKP Rental Management`,
+    params.senderSignature || 'SRKP Rental Management',
     `--------------------------------`,
     `Total Income: *${formatINR(params.totalIncome)}*`,
     ``,

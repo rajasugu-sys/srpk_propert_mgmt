@@ -39,6 +39,7 @@ interface UtilityMeterCaptureProps {
   initialUnitId?: string | null;
   onSaveUtilityReading?: (reading: UtilityReading, isNew: boolean) => void;
   onSaveUtilityReadingsBatch?: (readings: UtilityReading[]) => void;
+  isReadOnly?: boolean;
 }
 
 interface UnitMeterDraft {
@@ -111,6 +112,7 @@ export const UtilityMeterCapture: React.FC<UtilityMeterCaptureProps> = ({
   initialUnitId,
   onSaveUtilityReading,
   onSaveUtilityReadingsBatch,
+  isReadOnly = false,
 }) => {
   const [floorFilter, setFloorFilter] = useState<string>('ALL');
   const [drafts, setDrafts] = useState<Record<string, UnitMeterDraft>>({});
@@ -344,7 +346,7 @@ export const UtilityMeterCapture: React.FC<UtilityMeterCaptureProps> = ({
   }, [dirtyUnits, pendingUnits, filteredUnits]);
 
   const handleSaveAll = () => {
-    if (unitsToSave.length === 0) return;
+    if (isReadOnly || unitsToSave.length === 0) return;
     setGlobalError(null);
     setSavedToast(null);
 
@@ -557,6 +559,12 @@ export const UtilityMeterCapture: React.FC<UtilityMeterCaptureProps> = ({
           </div>
         </div>
 
+        {isReadOnly && (
+          <div className="rounded-2xl border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-xs font-semibold text-amber-900">
+            View-only mode: Utility meter readings cannot be modified with Viewer access.
+          </div>
+        )}
+
         {/* Status Summary Strip */}
         <div className="flex items-center justify-between px-1 text-[11px] text-gray-500">
           <span>
@@ -695,21 +703,23 @@ export const UtilityMeterCapture: React.FC<UtilityMeterCaptureProps> = ({
                         </span>
                       </div>
 
-                      <label className="inline-flex items-center gap-1.5 rounded-xl bg-[#0f172a] px-2.5 py-1.5 text-[11px] font-semibold text-white hover:bg-slate-800 cursor-pointer shrink-0 min-h-[34px]">
-                        {isEbBusy ? (
-                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                        ) : (
-                          <Camera className="w-3.5 h-3.5 text-[#489E44]" />
-                        )}
-                        <span>{isEbBusy ? 'Scanning...' : 'EB Bill OCR'}</span>
-                        <input
-                          type="file"
-                          accept="image/*"
-                          className="hidden"
-                          onChange={(e) => void handleEbScreenshotUpload(e, unit)}
-                          disabled={Boolean(ocrBusyKey)}
-                        />
-                      </label>
+                      {!isReadOnly && (
+                        <label className="inline-flex items-center gap-1.5 rounded-xl bg-[#0f172a] px-2.5 py-1.5 text-[11px] font-semibold text-white hover:bg-slate-800 cursor-pointer shrink-0 min-h-[34px]">
+                          {isEbBusy ? (
+                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          ) : (
+                            <Camera className="w-3.5 h-3.5 text-[#489E44]" />
+                          )}
+                          <span>{isEbBusy ? 'Scanning...' : 'EB Bill OCR'}</span>
+                          <input
+                            type="file"
+                            accept="image/*"
+                            className="hidden"
+                            onChange={(e) => void handleEbScreenshotUpload(e, unit)}
+                            disabled={Boolean(ocrBusyKey)}
+                          />
+                        </label>
+                      )}
                     </div>
 
                     <div>
@@ -720,11 +730,12 @@ export const UtilityMeterCapture: React.FC<UtilityMeterCaptureProps> = ({
                         type="number"
                         min={0}
                         inputMode="numeric"
+                        disabled={isReadOnly}
                         value={draft.ebBillAmount}
                         onChange={(e) =>
                           updateDraft(unit, { ebBillAmount: e.target.value })
                         }
-                        className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm font-mono tabular-nums font-bold text-[#0f172a] min-h-[42px]"
+                        className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm font-mono tabular-nums font-bold text-[#0f172a] min-h-[42px] disabled:bg-gray-100 disabled:text-gray-600"
                       />
                     </div>
 
@@ -755,21 +766,23 @@ export const UtilityMeterCapture: React.FC<UtilityMeterCaptureProps> = ({
                         <span className="text-[11px] font-semibold text-gray-700 font-mono truncate">
                           Meter #1 ({unit.water_rr_number})
                         </span>
-                        <label className="inline-flex items-center gap-1 rounded-xl border border-gray-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-[#0f172a] hover:bg-gray-100 cursor-pointer shrink-0 min-h-[32px]">
-                          {isW1Busy ? (
-                            <Loader2 className="w-3 h-3 animate-spin" />
-                          ) : (
-                            <Camera className="w-3 h-3 text-[#489E44]" />
-                          )}
-                          <span>{isW1Busy ? 'Reading...' : 'Photo OCR'}</span>
-                          <input
-                            type="file"
-                            accept="image/*"
-                            className="hidden"
-                            onChange={(e) => void handleWaterMeterPhoto(e, unit, 1)}
-                            disabled={Boolean(ocrBusyKey)}
-                          />
-                        </label>
+                        {!isReadOnly && (
+                          <label className="inline-flex items-center gap-1 rounded-xl border border-gray-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-[#0f172a] hover:bg-gray-100 cursor-pointer shrink-0 min-h-[32px]">
+                            {isW1Busy ? (
+                              <Loader2 className="w-3 h-3 animate-spin" />
+                            ) : (
+                              <Camera className="w-3 h-3 text-[#489E44]" />
+                            )}
+                            <span>{isW1Busy ? 'Reading...' : 'Photo OCR'}</span>
+                            <input
+                              type="file"
+                              accept="image/*"
+                              className="hidden"
+                              onChange={(e) => void handleWaterMeterPhoto(e, unit, 1)}
+                              disabled={Boolean(ocrBusyKey)}
+                            />
+                          </label>
+                        )}
                       </div>
                       <div className="grid grid-cols-2 gap-2">
                         <div>
@@ -780,11 +793,12 @@ export const UtilityMeterCapture: React.FC<UtilityMeterCaptureProps> = ({
                             type="number"
                             min={0}
                             inputMode="numeric"
+                            disabled={isReadOnly}
                             value={draft.prevReading1}
                             onChange={(e) =>
                               updateDraft(unit, { prevReading1: e.target.value })
                             }
-                            className="w-full rounded-xl border border-gray-200 bg-white px-2.5 py-2 text-sm font-mono tabular-nums text-gray-700 min-h-[40px]"
+                            className="w-full rounded-xl border border-gray-200 bg-white px-2.5 py-2 text-sm font-mono tabular-nums text-gray-700 min-h-[40px] disabled:bg-gray-100"
                           />
                         </div>
                         <div>
@@ -795,11 +809,12 @@ export const UtilityMeterCapture: React.FC<UtilityMeterCaptureProps> = ({
                             type="number"
                             min={0}
                             inputMode="numeric"
+                            disabled={isReadOnly}
                             value={draft.currReading1}
                             onChange={(e) =>
                               updateDraft(unit, { currReading1: e.target.value })
                             }
-                            className="w-full rounded-xl border border-gray-200 bg-white px-2.5 py-2 text-sm font-mono tabular-nums font-bold text-[#0f172a] min-h-[40px]"
+                            className="w-full rounded-xl border border-gray-200 bg-white px-2.5 py-2 text-sm font-mono tabular-nums font-bold text-[#0f172a] min-h-[40px] disabled:bg-gray-100 disabled:text-gray-600"
                           />
                         </div>
                       </div>
@@ -812,21 +827,23 @@ export const UtilityMeterCapture: React.FC<UtilityMeterCaptureProps> = ({
                           <span className="text-[11px] font-semibold text-gray-700 font-mono truncate">
                             Meter #2 ({unit.water_rr_number2})
                           </span>
-                          <label className="inline-flex items-center gap-1 rounded-xl border border-gray-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-[#0f172a] hover:bg-gray-100 cursor-pointer shrink-0 min-h-[32px]">
-                            {isW2Busy ? (
-                              <Loader2 className="w-3 h-3 animate-spin" />
-                            ) : (
-                              <Camera className="w-3 h-3 text-[#489E44]" />
-                            )}
-                            <span>{isW2Busy ? 'Reading...' : 'Photo OCR'}</span>
-                            <input
-                              type="file"
-                              accept="image/*"
-                              className="hidden"
-                              onChange={(e) => void handleWaterMeterPhoto(e, unit, 2)}
-                              disabled={Boolean(ocrBusyKey)}
-                            />
-                          </label>
+                          {!isReadOnly && (
+                            <label className="inline-flex items-center gap-1 rounded-xl border border-gray-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-[#0f172a] hover:bg-gray-100 cursor-pointer shrink-0 min-h-[32px]">
+                              {isW2Busy ? (
+                                <Loader2 className="w-3 h-3 animate-spin" />
+                              ) : (
+                                <Camera className="w-3 h-3 text-[#489E44]" />
+                              )}
+                              <span>{isW2Busy ? 'Reading...' : 'Photo OCR'}</span>
+                              <input
+                                type="file"
+                                accept="image/*"
+                                className="hidden"
+                                onChange={(e) => void handleWaterMeterPhoto(e, unit, 2)}
+                                disabled={Boolean(ocrBusyKey)}
+                              />
+                            </label>
+                          )}
                         </div>
                         <div className="grid grid-cols-2 gap-2">
                           <div>
@@ -837,11 +854,12 @@ export const UtilityMeterCapture: React.FC<UtilityMeterCaptureProps> = ({
                               type="number"
                               min={0}
                               inputMode="numeric"
+                              disabled={isReadOnly}
                               value={draft.prevReading2}
                               onChange={(e) =>
                                 updateDraft(unit, { prevReading2: e.target.value })
                               }
-                              className="w-full rounded-xl border border-gray-200 bg-white px-2.5 py-2 text-sm font-mono tabular-nums text-gray-700 min-h-[40px]"
+                              className="w-full rounded-xl border border-gray-200 bg-white px-2.5 py-2 text-sm font-mono tabular-nums text-gray-700 min-h-[40px] disabled:bg-gray-100"
                             />
                           </div>
                           <div>
@@ -852,11 +870,12 @@ export const UtilityMeterCapture: React.FC<UtilityMeterCaptureProps> = ({
                               type="number"
                               min={0}
                               inputMode="numeric"
+                              disabled={isReadOnly}
                               value={draft.currReading2}
                               onChange={(e) =>
                                 updateDraft(unit, { currReading2: e.target.value })
                               }
-                              className="w-full rounded-xl border border-gray-200 bg-white px-2.5 py-2 text-sm font-mono tabular-nums font-bold text-[#0f172a] min-h-[40px]"
+                              className="w-full rounded-xl border border-gray-200 bg-white px-2.5 py-2 text-sm font-mono tabular-nums font-bold text-[#0f172a] min-h-[40px] disabled:bg-gray-100 disabled:text-gray-600"
                             />
                           </div>
                         </div>
@@ -939,19 +958,21 @@ export const UtilityMeterCapture: React.FC<UtilityMeterCaptureProps> = ({
       </div>
 
       {/* Sticky Bottom Action Bar */}
-      <div className="fixed bottom-16 left-0 right-0 z-30 print:hidden">
-        <div className="max-w-md mx-auto bg-white/95 backdrop-blur-md border-t border-gray-200 px-4 py-2.5 shadow-sm">
-          <button
-            type="button"
-            disabled={filteredUnits.length === 0}
-            onClick={handleSaveAll}
-            className="w-full min-h-[48px] inline-flex items-center justify-center gap-2 rounded-2xl bg-[#489E44] px-5 py-3 text-sm font-semibold text-white hover:bg-[#3E8E41] disabled:bg-gray-300 disabled:text-gray-500 cursor-pointer disabled:cursor-not-allowed shadow-xs active:scale-[0.99] transition-transform"
-          >
-            <Gauge className="w-4 h-4" />
-            <span>{ctaLabel}</span>
-          </button>
+      {!isReadOnly && (
+        <div className="fixed bottom-16 left-0 right-0 z-30 print:hidden">
+          <div className="max-w-md mx-auto bg-white/95 backdrop-blur-md border-t border-gray-200 px-4 py-2.5 shadow-sm">
+            <button
+              type="button"
+              disabled={filteredUnits.length === 0}
+              onClick={handleSaveAll}
+              className="w-full min-h-[48px] inline-flex items-center justify-center gap-2 rounded-2xl bg-[#489E44] px-5 py-3 text-sm font-semibold text-white hover:bg-[#3E8E41] disabled:bg-gray-300 disabled:text-gray-500 cursor-pointer disabled:cursor-not-allowed shadow-xs active:scale-[0.99] transition-transform"
+            >
+              <Gauge className="w-4 h-4" />
+              <span>{ctaLabel}</span>
+            </button>
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 };

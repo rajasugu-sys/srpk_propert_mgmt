@@ -36,19 +36,21 @@ interface AnnouncementsViewProps {
   selectedPropertyId: string;
   onChangeSelectedPropertyId: (propertyId: string) => void;
   onBack: () => void;
+  isReadOnly?: boolean;
+  senderSignature?: string;
 }
 
 type AudienceFilter = 'ALL_ACTIVE' | 'EXPIRING_SOON' | 'HOUSE';
 type TemplateId = 'rent_reminder' | 'water_tank' | 'maintenance_notice' | 'custom';
 
 const RENT_REMINDER_TEMPLATE =
-  'Hi {tenant_name}, this is a friendly reminder regarding your monthly rent & utility billing for {house_name} ({unit_name}) — Rent: ₹{rent_amount}, Utilities: ₹{utility_amount}, Total Due: ₹{total_due}. Please share payment confirmation once completed. Thank you — SRKP Rental Management';
+  'Hi {tenant_name}, this is a friendly reminder regarding your monthly rent & utility billing for {house_name} ({unit_name}) — Rent: ₹{rent_amount}, Utilities: ₹{utility_amount}, Total Due: ₹{total_due}. Please share payment confirmation once completed. Thank you — {sender_signature}';
 
 const WATER_TANK_TEMPLATE =
-  'Notice: Overhead Tank & Sump Cleaning\n\nHi {tenant_name},\nScheduled sump & overhead tank cleaning for {house_name} ({unit_name}) will take place this weekend between 10:00 AM and 1:00 PM. Kindly store sufficient water in advance.\n\nThank you — SRKP Rental Management';
+  'Notice: Overhead Tank & Sump Cleaning\n\nHi {tenant_name},\nScheduled sump & overhead tank cleaning for {house_name} ({unit_name}) will take place this weekend between 10:00 AM and 1:00 PM. Kindly store sufficient water in advance.\n\nThank you — {sender_signature}';
 
 const MAINTENANCE_UPDATE_TEMPLATE =
-  'Building Maintenance Update\n\nHi {tenant_name},\nCommon area maintenance and meter reading inspection at {house_name} ({unit_name}) is scheduled shortly. Thank you for your cooperation.\n\nRegards — SRKP Rental Management';
+  'Building Maintenance Update\n\nHi {tenant_name},\nCommon area maintenance and meter reading inspection at {house_name} ({unit_name}) is scheduled shortly. Thank you for your cooperation.\n\nRegards — {sender_signature}';
 
 const TEMPLATE_VARIABLES = [
   '{tenant_name}',
@@ -57,6 +59,7 @@ const TEMPLATE_VARIABLES = [
   '{rent_amount}',
   '{utility_amount}',
   '{total_due}',
+  '{sender_signature}',
 ] as const;
 
 export const AnnouncementsView: React.FC<AnnouncementsViewProps> = ({
@@ -69,6 +72,8 @@ export const AnnouncementsView: React.FC<AnnouncementsViewProps> = ({
   selectedPropertyId,
   onChangeSelectedPropertyId,
   onBack,
+  isReadOnly = false,
+  senderSignature = 'SRKP Rental Management',
 }) => {
   const [audience, setAudience] = useState<AudienceFilter>('ALL_ACTIVE');
   const [templateId, setTemplateId] = useState<TemplateId>('rent_reminder');
@@ -180,10 +185,11 @@ export const AnnouncementsView: React.FC<AnnouncementsViewProps> = ({
       '{rent_amount}': Math.round(rentAmount).toLocaleString('en-IN'),
       '{utility_amount}': Math.round(utilityAmount).toLocaleString('en-IN'),
       '{total_due}': Math.round(totalDue).toLocaleString('en-IN'),
+      '{sender_signature}': senderSignature || 'SRKP Rental Management',
     };
 
     return template.replace(
-      /\{(tenant_name|house_name|unit_name|rent_amount|utility_amount|total_due)\}/g,
+      /\{(tenant_name|house_name|unit_name|rent_amount|utility_amount|total_due|sender_signature)\}/g,
       (match) => replacements[match] ?? match
     );
   };
@@ -273,7 +279,7 @@ export const AnnouncementsView: React.FC<AnnouncementsViewProps> = ({
   };
 
   const handleSendNext = () => {
-    if (!nextTenant) return;
+    if (isReadOnly || !nextTenant) return;
     window.open(nextWaHref, '_blank', 'noopener,noreferrer');
     const sentId = nextTenant.id;
     setSentIds((prev) => {
@@ -601,7 +607,11 @@ export const AnnouncementsView: React.FC<AnnouncementsViewProps> = ({
       {/* Sticky Bottom Guided Queue Bar */}
       <div className="fixed bottom-16 left-0 right-0 z-30 print:hidden">
         <div className="max-w-md mx-auto bg-white/95 backdrop-blur-md border-t border-gray-200 px-4 py-2.5 shadow-sm">
-          {allQueueSent ? (
+          {isReadOnly ? (
+            <div className="w-full min-h-[44px] inline-flex items-center justify-center rounded-2xl border border-gray-200 bg-gray-50 px-4 py-2.5 text-xs font-semibold text-gray-500">
+              Read-Only Viewer Mode — WhatsApp sending disabled
+            </div>
+          ) : allQueueSent ? (
             <div className="flex items-center justify-between gap-2">
               <div className="flex items-center gap-2 text-xs font-bold text-[#3E8E41]">
                 <span className="flex h-7 w-7 items-center justify-center rounded-full bg-emerald-100">

@@ -35,6 +35,8 @@ interface AddExpensesViewProps {
   onBack: () => void;
   onChangeBillingMonth: (month: string) => void;
   onSaveExpensesBatch: (newExpenses: ExpenseRecord[]) => void;
+  isReadOnly?: boolean;
+  senderSignature?: string;
 }
 
 interface DraftExpenseRow {
@@ -72,6 +74,8 @@ export const AddExpensesView: React.FC<AddExpensesViewProps> = ({
   onBack,
   onChangeBillingMonth,
   onSaveExpensesBatch,
+  isReadOnly = false,
+  senderSignature = 'SRKP Rental Management',
 }) => {
   const [selectedHouseId, setSelectedHouseId] = useState<string>(
     properties[0]?.property_id || 'OTHER'
@@ -164,7 +168,7 @@ export const AddExpensesView: React.FC<AddExpensesViewProps> = ({
     const chosenHouse = properties.find((p) => p.property_id === selectedHouseId);
     const houseId = chosenHouse ? chosenHouse.property_id : 'OTHER';
     const houseName = chosenHouse ? chosenHouse.property_name : 'General / Other';
-    const createdBy = session.accountLabel || session.username || 'Owner';
+    const createdBy = session.fullName || session.username || 'Admin';
     const derivedMonth = expenseDate.length >= 7 ? expenseDate.slice(0, 7) : selectedMonth;
 
     const newRecords: ExpenseRecord[] = rows.map((row, idx) => ({
@@ -219,7 +223,10 @@ export const AddExpensesView: React.FC<AddExpensesViewProps> = ({
     };
   }, [invoices, expenses, properties, selectedMonth]);
 
-  const reportText = useMemo(() => formatWhatsAppPnLReport(monthlyPnL), [monthlyPnL]);
+  const reportText = useMemo(
+    () => formatWhatsAppPnLReport({ ...monthlyPnL, senderSignature }),
+    [monthlyPnL, senderSignature]
+  );
 
   const handleCopyReport = async () => {
     try {
@@ -257,7 +264,22 @@ export const AddExpensesView: React.FC<AddExpensesViewProps> = ({
 
       {/* Curved White Lower Sheet */}
       <div className="bg-white rounded-t-[28px] -mt-5 pt-5 px-4 pb-24 min-h-[calc(100vh-110px)] space-y-5">
-        {/* Multi-Item Expense Entry Form */}
+        {isReadOnly ? (
+          <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 space-y-3 text-xs text-amber-900">
+            <div className="font-bold">Read-Only Access</div>
+            <p>
+              Viewer accounts cannot add or modify expenses. Switch to an Admin account to record expenses.
+            </p>
+            <button
+              type="button"
+              onClick={onBack}
+              className="rounded-xl bg-[#489E44] px-4 py-2 text-xs font-bold text-white cursor-pointer"
+            >
+              Back to Expenses
+            </button>
+          </div>
+        ) : (
+        /* Multi-Item Expense Entry Form */
         <form onSubmit={handleSaveBatch} className="space-y-4">
           <div className="rounded-2xl border border-gray-100 bg-gray-50/80 p-3.5 space-y-3">
             <div>
@@ -453,6 +475,7 @@ export const AddExpensesView: React.FC<AddExpensesViewProps> = ({
             </button>
           </div>
         </form>
+        )}
 
         {/* WhatsApp P&L Summary Report Generator Card */}
         <section className="rounded-2xl border border-emerald-200 bg-emerald-50/40 p-4 space-y-3">
@@ -473,28 +496,32 @@ export const AddExpensesView: React.FC<AddExpensesViewProps> = ({
           </pre>
 
           <div className="space-y-2">
-            <a
-              href={`https://wa.me/${normalizeWhatsAppDigits(
-                ownerWhatsappPhone
-              )}?text=${encodeURIComponent(reportText)}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-[#489E44] hover:bg-[#3E8E41] px-4 py-3 text-xs font-bold text-white min-h-[44px]"
-            >
-              <MessageSquare className="w-4 h-4" />
-              <span>Send Report via WhatsApp</span>
-            </a>
-
-            <div className="grid grid-cols-2 gap-2">
+            {!isReadOnly && (
               <a
-                href={`https://wa.me/?text=${encodeURIComponent(reportText)}`}
+                href={`https://wa.me/${normalizeWhatsAppDigits(
+                  ownerWhatsappPhone
+                )}?text=${encodeURIComponent(reportText)}`}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs font-bold text-[#0f172a] hover:bg-gray-50 min-h-[40px]"
+                className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-[#489E44] hover:bg-[#3E8E41] px-4 py-3 text-xs font-bold text-white min-h-[44px]"
               >
-                <Share2 className="w-3.5 h-3.5 text-[#489E44]" />
-                <span>Share to Contact</span>
+                <MessageSquare className="w-4 h-4" />
+                <span>Send Report via WhatsApp</span>
               </a>
+            )}
+
+            <div className={isReadOnly ? 'grid grid-cols-1 gap-2' : 'grid grid-cols-2 gap-2'}>
+              {!isReadOnly && (
+                <a
+                  href={`https://wa.me/?text=${encodeURIComponent(reportText)}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs font-bold text-[#0f172a] hover:bg-gray-50 min-h-[40px]"
+                >
+                  <Share2 className="w-3.5 h-3.5 text-[#489E44]" />
+                  <span>Share to Contact</span>
+                </a>
+              )}
 
               <button
                 type="button"

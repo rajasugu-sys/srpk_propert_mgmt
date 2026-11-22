@@ -8,7 +8,9 @@ export type SyncTable =
   | 'UtilityReadings'
   | 'Invoices'
   | 'Expenses'
-  | 'Requests';
+  | 'Requests'
+  | 'Users'
+  | 'AppConfig';
 
 export const SPREADSHEET_ID = '1rV0SGO7fB5BB56xa3dmhL1eicYQF68hekT2rrSMswD0';
 export const SPREADSHEET_URL =
@@ -27,6 +29,8 @@ export const REQUIRED_SHEET_TABS: SyncTable[] = [
   'Invoices',
   'Expenses',
   'Requests',
+  'Users',
+  'AppConfig',
 ];
 
 const TAB_HEADERS: Record<SyncTable, string[]> = {
@@ -171,6 +175,22 @@ const TAB_HEADERS: Record<SyncTable, string[]> = {
     'resolved_at',
     'resolution_note',
   ],
+  Users: [
+    'user_id',
+    'full_name',
+    'email',
+    'mobile_number',
+    'access_type',
+    'access_status',
+    'must_reset_password',
+    'tenant_id',
+    'unit_id',
+    'password_salt',
+    'password_hash',
+    'created_at',
+    'updated_at',
+  ],
+  AppConfig: ['key', 'value', 'updated_at'],
 };
 
 export interface SheetsStatusResponse {
@@ -555,6 +575,8 @@ async function pullClientDirect(accessToken: string): Promise<PullSheetsResult> 
     Invoices: [],
     Expenses: [],
     Requests: [],
+    Users: [],
+    AppConfig: [],
   };
 
   try {
@@ -767,6 +789,24 @@ export async function fetchSheetsConfigStatus(): Promise<SheetsStatusResponse> {
   };
 }
 
+function getAuthHeaders(extra: Record<string, string> = {}): Record<string, string> {
+  const headers: Record<string, string> = { ...extra };
+  if (typeof window !== 'undefined') {
+    try {
+      const raw = sessionStorage.getItem('srpk_auth_session_v1');
+      if (raw) {
+        const parsed = JSON.parse(raw) as { authToken?: string };
+        if (parsed?.authToken) {
+          headers.Authorization = `Bearer ${parsed.authToken}`;
+        }
+      }
+    } catch {
+      // ignore storage errors
+    }
+  }
+  return headers;
+}
+
 export async function pullAllFromGoogleSheet(): Promise<PullSheetsResult> {
   const clientEnv = getClientEnvCredentials();
   if (clientEnv.configured) {
@@ -777,7 +817,10 @@ export async function pullAllFromGoogleSheet(): Promise<PullSheetsResult> {
   }
 
   try {
-    const res = await fetch('/api/sheets/pull', { method: 'POST' });
+    const res = await fetch('/api/sheets/pull', {
+      method: 'POST',
+      headers: getAuthHeaders(),
+    });
     return (await res.json()) as PullSheetsResult;
   } catch (err) {
     const msg =
@@ -820,7 +863,7 @@ export async function syncTableToGoogleSheet(
   try {
     const res = await fetch('/api/sheets/sync-table', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ table, records }),
     });
     return (await res.json()) as {
@@ -864,6 +907,16 @@ export async function pushAllTablesToGoogleSheet(dataset: EstateDataset): Promis
           Invoices: dataset.invoices || [],
           Expenses: dataset.expenses || [],
           Requests: dataset.requests || [],
+          Users: dataset.users || [],
+          AppConfig: dataset.settings?.master_admin_pin
+            ? [
+                {
+                  key: 'master_admin_pin',
+                  value: dataset.settings.master_admin_pin,
+                  updated_at: new Date().toISOString(),
+                },
+              ]
+            : [],
         };
 
         const tabStatuses: TabSyncStatus[] = [];
@@ -939,7 +992,7 @@ export async function pushAllTablesToGoogleSheet(dataset: EstateDataset): Promis
   try {
     const res = await fetch('/api/sheets/push-all', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ dataset }),
     });
     return (await res.json()) as {
@@ -1068,7 +1121,7 @@ export async function testConnectionAndSyncNow(dataset: EstateDataset): Promise<
   try {
     const res = await fetch('/api/sheets/test-and-sync', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ dataset }),
     });
     return (await res.json()) as {

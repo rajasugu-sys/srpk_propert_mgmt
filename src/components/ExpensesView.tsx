@@ -45,6 +45,8 @@ interface ExpensesViewProps {
   onOpenAddExpenses: () => void;
   onUpdateExpense: (expense: ExpenseRecord) => void;
   onDeleteExpense: (expenseId: string) => void;
+  isReadOnly?: boolean;
+  senderSignature?: string;
 }
 
 const EXPENSE_CATEGORIES: ExpenseCategory[] = [
@@ -99,6 +101,8 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
   onOpenAddExpenses,
   onUpdateExpense,
   onDeleteExpense,
+  isReadOnly = false,
+  senderSignature = 'SRKP Rental Management',
 }) => {
   const [houseFilter, setHouseFilter] = useState<string>('ALL');
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -210,8 +214,8 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
   }, [monthInvoices, monthExpenses, billingMonth, houseBreakdown]);
 
   const pnlReportText = useMemo(
-    () => formatWhatsAppPnLReport(fullMonthPnL),
-    [fullMonthPnL]
+    () => formatWhatsAppPnLReport({ ...fullMonthPnL, senderSignature }),
+    [fullMonthPnL, senderSignature]
   );
 
   // Filtered & searched transactions list
@@ -440,14 +444,16 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
             </p>
           </div>
 
-          <button
-            type="button"
-            onClick={onOpenAddExpenses}
-            className="inline-flex items-center gap-1.5 rounded-full bg-[#489E44] hover:bg-[#3E8E41] px-4 py-2 text-xs font-bold text-white shadow-xs transition-colors cursor-pointer min-h-[40px] shrink-0"
-          >
-            <Plus className="w-4 h-4" />
-            <span>+ Add Expense</span>
-          </button>
+          {!isReadOnly && (
+            <button
+              type="button"
+              onClick={onOpenAddExpenses}
+              className="inline-flex items-center gap-1.5 rounded-full bg-[#489E44] hover:bg-[#3E8E41] px-4 py-2 text-xs font-bold text-white shadow-xs transition-colors cursor-pointer min-h-[40px] shrink-0"
+            >
+              <Plus className="w-4 h-4" />
+              <span>+ Add Expense</span>
+            </button>
+          )}
         </div>
 
         {/* Horizontal Scrollable House Filter Pills */}
@@ -554,14 +560,16 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
             <div className="text-xs font-semibold text-gray-600">
               No expenses recorded for this month and filter.
             </div>
-            <button
-              type="button"
-              onClick={onOpenAddExpenses}
-              className="inline-flex items-center gap-1.5 rounded-full bg-[#489E44] px-4 py-2 text-xs font-bold text-white hover:bg-[#3E8E41] cursor-pointer"
-            >
-              <Plus className="w-3.5 h-3.5" />
-              <span>Add First Expense</span>
-            </button>
+            {!isReadOnly && (
+              <button
+                type="button"
+                onClick={onOpenAddExpenses}
+                className="inline-flex items-center gap-1.5 rounded-full bg-[#489E44] px-4 py-2 text-xs font-bold text-white hover:bg-[#3E8E41] cursor-pointer"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>Add First Expense</span>
+              </button>
+            )}
           </div>
         ) : (
           <div className="space-y-2.5">
@@ -613,30 +621,32 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
                       <div className="text-sm font-extrabold font-mono tabular-nums text-rose-600">
                         -{formatINR(exp.amount)}
                       </div>
-                      <div className="mt-2 flex items-center justify-end gap-1">
-                        <button
-                          type="button"
-                          onClick={() => openEditModal(exp)}
-                          className="flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 cursor-pointer"
-                          aria-label={`Edit ${exp.description}`}
-                          title="Edit Expense"
-                        >
-                          <Pencil className="w-3.5 h-3.5" />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setConfirmDeleteId(
-                              confirmDeleteId === exp.id ? null : exp.id
-                            )
-                          }
-                          className="flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 bg-white text-rose-600 hover:bg-rose-50 cursor-pointer"
-                          aria-label={`Delete ${exp.description}`}
-                          title="Delete Expense"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
+                      {!isReadOnly && (
+                        <div className="mt-2 flex items-center justify-end gap-1">
+                          <button
+                            type="button"
+                            onClick={() => openEditModal(exp)}
+                            className="flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 cursor-pointer"
+                            aria-label={`Edit ${exp.description}`}
+                            title="Edit Expense"
+                          >
+                            <Pencil className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setConfirmDeleteId(
+                                confirmDeleteId === exp.id ? null : exp.id
+                              )
+                            }
+                            className="flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 bg-white text-rose-600 hover:bg-rose-50 cursor-pointer"
+                            aria-label={`Delete ${exp.description}`}
+                            title="Delete Expense"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      )}
                     </div>
                   </div>
 
@@ -829,28 +839,32 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
             </pre>
 
             <div className="space-y-2">
-              <a
-                href={`https://wa.me/${normalizeWhatsAppDigits(
-                  ownerWhatsappPhone
-                )}?text=${encodeURIComponent(pnlReportText)}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-[#489E44] hover:bg-[#3E8E41] px-4 py-3 text-xs font-bold text-white min-h-[44px]"
-              >
-                <MessageSquare className="w-4 h-4" />
-                <span>Send Report via WhatsApp</span>
-              </a>
-
-              <div className="grid grid-cols-2 gap-2">
+              {!isReadOnly && (
                 <a
-                  href={`https://wa.me/?text=${encodeURIComponent(pnlReportText)}`}
+                  href={`https://wa.me/${normalizeWhatsAppDigits(
+                    ownerWhatsappPhone
+                  )}?text=${encodeURIComponent(pnlReportText)}`}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-xs font-bold text-[#0f172a] hover:bg-gray-50 min-h-[40px]"
+                  className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-[#489E44] hover:bg-[#3E8E41] px-4 py-3 text-xs font-bold text-white min-h-[44px]"
                 >
-                  <Share2 className="w-3.5 h-3.5 text-[#489E44]" />
-                  <span>Choose Contact</span>
+                  <MessageSquare className="w-4 h-4" />
+                  <span>Send Report via WhatsApp</span>
                 </a>
+              )}
+
+              <div className={isReadOnly ? 'grid grid-cols-1 gap-2' : 'grid grid-cols-2 gap-2'}>
+                {!isReadOnly && (
+                  <a
+                    href={`https://wa.me/?text=${encodeURIComponent(pnlReportText)}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-xs font-bold text-[#0f172a] hover:bg-gray-50 min-h-[40px]"
+                  >
+                    <Share2 className="w-3.5 h-3.5 text-[#489E44]" />
+                    <span>Choose Contact</span>
+                  </a>
+                )}
 
                 <button
                   type="button"

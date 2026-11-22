@@ -1,42 +1,11 @@
-import {
+import type {
+  AccessType,
+  AppUserAccount,
   AuthSession,
   AutoLockTimerMode,
-  RoleCredentialsConfig,
 } from '../types/estate';
 
-/**
- * Dual-Owner Credentials for SRKP Rental Tool.
- * Both authorized accounts authenticate with full Owner (Admin) permissions.
- * Override cleanly via Vite environment variables:
- *   VITE_OWNER_EMAIL   / VITE_OWNER_PIN
- *   VITE_OWNER_2_EMAIL / VITE_OWNER_2_PIN
- * Or update directly from Settings > Access & PIN Management.
- *
- * Initial Default Owner Accounts (change in Settings after first login):
- *   - Owner 1: username/email = "rajasugu@gmail.com" (alias: "owner@srpkestate.in") | PIN = "202601"
- *   - Owner 2 (Co-Owner / Partner): username/email = "Parthibannewid@gmail.com" (alias: "coowner@srpkestate.in") | PIN = "202602"
- */
-export const DEFAULT_ROLE_CREDENTIALS: RoleCredentialsConfig = {
-  Owner1: {
-    username: (import.meta.env.VITE_OWNER_EMAIL || 'rajasugu@gmail.com').trim(),
-    pin: (import.meta.env.VITE_OWNER_PIN || '202601').trim(),
-  },
-  Owner2: {
-    username: (
-      import.meta.env.VITE_OWNER_2_EMAIL ||
-      import.meta.env.VITE_PARTNER_EMAIL ||
-      'Parthibannewid@gmail.com'
-    ).trim(),
-    pin: (
-      import.meta.env.VITE_OWNER_2_PIN ||
-      import.meta.env.VITE_PARTNER_PIN ||
-      '202602'
-    ).trim(),
-  },
-};
-
 export const AUTH_SESSION_STORAGE_KEY = 'srpk_auth_session_v1';
-export const AUTH_CREDENTIALS_CACHE_KEY = 'srpk_auth_credentials_v1';
 export const LAST_ACTIVITY_TS_KEY = 'srpk_last_activity_ts_v1';
 export const HIDDEN_AT_TS_KEY = 'srpk_hidden_at_ts_v1';
 export const AUTO_LOCK_TIMER_KEY = 'srpk_auto_lock_timer_v1';
@@ -203,136 +172,6 @@ export function evaluateSessionLockStatus(
   return { locked: false };
 }
 
-type LegacyCredentialsShape = Partial<RoleCredentialsConfig> & {
-  Owner?: { username?: string; pin?: string };
-  Partner?: { username?: string; pin?: string };
-};
-
-export function resolveEffectiveCredentials(
-  settingsOverride?: RoleCredentialsConfig
-): RoleCredentialsConfig {
-  let cached: LegacyCredentialsShape | null = null;
-  if (!settingsOverride && typeof window !== 'undefined') {
-    try {
-      const raw = localStorage.getItem(AUTH_CREDENTIALS_CACHE_KEY);
-      if (raw) {
-        cached = JSON.parse(raw) as LegacyCredentialsShape;
-      }
-    } catch {
-      cached = null;
-    }
-  }
-
-  const source = (settingsOverride || cached) as LegacyCredentialsShape | null;
-  const owner1Src = source?.Owner1 || source?.Owner;
-  const owner2Src = source?.Owner2 || source?.Partner;
-
-  const rawOwner1 = owner1Src?.username?.trim() || '';
-  const rawOwner2 = owner2Src?.username?.trim() || '';
-
-  return {
-    Owner1: {
-      username:
-        !rawOwner1 || rawOwner1.toLowerCase() === 'owner@srpkestate.in'
-          ? DEFAULT_ROLE_CREDENTIALS.Owner1.username
-          : rawOwner1,
-      pin: owner1Src?.pin?.trim() || DEFAULT_ROLE_CREDENTIALS.Owner1.pin,
-    },
-    Owner2: {
-      username:
-        !rawOwner2 || rawOwner2.toLowerCase() === 'coowner@srpkestate.in'
-          ? DEFAULT_ROLE_CREDENTIALS.Owner2.username
-          : rawOwner2,
-      pin: owner2Src?.pin?.trim() || DEFAULT_ROLE_CREDENTIALS.Owner2.pin,
-    },
-  };
-}
-
-export function persistCredentialsCache(creds: RoleCredentialsConfig): void {
-  if (typeof window === 'undefined') return;
-  try {
-    localStorage.setItem(AUTH_CREDENTIALS_CACHE_KEY, JSON.stringify(creds));
-  } catch {
-    // ignore storage errors
-  }
-}
-
-export function verifyOwnerLogin(params: {
-  usernameInput: string;
-  pinInput: string;
-  settingsCredentials?: RoleCredentialsConfig;
-}):
-  | { ok: true; session: AuthSession }
-  | { ok: false; error: string } {
-  const effective = resolveEffectiveCredentials(params.settingsCredentials);
-  const enteredUser = params.usernameInput.trim().toLowerCase();
-  const enteredPin = params.pinInput.trim();
-
-  if (!enteredUser || !enteredPin) {
-    return {
-      ok: false,
-      error: 'Enter both your authorized Owner email/username and PIN/password.',
-    };
-  }
-
-  const candidates: Array<{
-    accountLabel: 'Owner 1' | 'Owner 2';
-    username: string;
-    aliases: string[];
-    pin: string;
-  }> = [
-    {
-      accountLabel: 'Owner 1',
-      username: effective.Owner1.username.trim(),
-      aliases:
-        effective.Owner1.username.trim().toLowerCase() === 'rajasugu@gmail.com'
-          ? ['rajasugu@gmail.com', 'owner@srpkestate.in']
-          : [effective.Owner1.username.trim().toLowerCase()],
-      pin: effective.Owner1.pin.trim(),
-    },
-    {
-      accountLabel: 'Owner 2',
-      username: effective.Owner2.username.trim(),
-      aliases:
-        effective.Owner2.username.trim().toLowerCase() === 'parthibannewid@gmail.com'
-          ? ['parthibannewid@gmail.com', 'coowner@srpkestate.in']
-          : [effective.Owner2.username.trim().toLowerCase()],
-      pin: effective.Owner2.pin.trim(),
-    },
-  ];
-
-  const matchedAccount = candidates.find(
-    (c) =>
-      c.username.toLowerCase() === enteredUser || c.aliases.includes(enteredUser)
-  );
-
-  if (!matchedAccount) {
-    return {
-      ok: false,
-      error:
-        'Access denied: unauthorized account. Only the two configured Owner accounts may sign in.',
-    };
-  }
-
-  if (enteredPin !== matchedAccount.pin) {
-    return {
-      ok: false,
-      error: 'Incorrect PIN or password for this Owner account.',
-    };
-  }
-
-  return {
-    ok: true,
-    session: {
-      role: 'Owner',
-      accountLabel: matchedAccount.accountLabel,
-      username: matchedAccount.username,
-      loginMethod: 'password',
-      authenticatedAt: new Date().toISOString(),
-    },
-  };
-}
-
 export function loadPersistedAuthSession(): AuthSession | null {
   if (typeof window === 'undefined') return null;
   try {
@@ -350,23 +189,36 @@ export function loadPersistedAuthSession(): AuthSession | null {
       return null;
     }
 
-    const parsed = JSON.parse(raw) as Omit<Partial<AuthSession>, 'role'> & {
-      role?: string;
-    };
+    const parsed = JSON.parse(raw) as Partial<AuthSession>;
     if (
-      (parsed.role === 'Owner' || parsed.role === 'Partner') &&
-      typeof parsed.username === 'string' &&
-      parsed.username.trim()
+      (parsed.accessType === 'admin' ||
+        parsed.accessType === 'viewer' ||
+        parsed.accessType === 'tenant') &&
+      typeof parsed.userId === 'string' &&
+      parsed.userId.trim() &&
+      typeof parsed.authToken === 'string' &&
+      parsed.authToken.trim()
     ) {
       clearHiddenAtTimestamp();
       recordLastActivityTimestamp();
       return {
-        role: 'Owner',
-        accountLabel:
-          parsed.accountLabel === 'Owner 2' || parsed.role === 'Partner'
-            ? 'Owner 2'
-            : 'Owner 1',
-        username: parsed.username,
+        userId: parsed.userId,
+        fullName: parsed.fullName || parsed.userId,
+        email: parsed.email || '',
+        mobileNumber: parsed.mobileNumber || '',
+        accessType: parsed.accessType,
+        accessStatus: parsed.accessStatus === 'revoked' ? 'revoked' : 'active',
+        mustResetPassword: Boolean(parsed.mustResetPassword),
+        tenantId: parsed.tenantId || null,
+        unitId: parsed.unitId || null,
+        authToken: parsed.authToken,
+        role:
+          parsed.accessType === 'admin'
+            ? 'Admin'
+            : parsed.accessType === 'viewer'
+              ? 'Viewer'
+              : 'Tenant',
+        username: parsed.userId,
         loginMethod: parsed.loginMethod === 'biometric' ? 'biometric' : 'password',
         authenticatedAt: parsed.authenticatedAt || new Date().toISOString(),
       };
@@ -392,5 +244,274 @@ export function savePersistedAuthSession(session: AuthSession | null): void {
     }
   } catch {
     // ignore storage errors
+  }
+}
+
+export function generateTemporaryPassword(length = 8): string {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  const buf = new Uint8Array(length);
+  crypto.getRandomValues(buf);
+  let out = '';
+  for (let i = 0; i < length; i += 1) {
+    out += chars[buf[i] % chars.length];
+  }
+  return out;
+}
+
+export function getAuthFetchHeaders(
+  authToken?: string,
+  extra: Record<string, string> = {}
+): Record<string, string> {
+  const headers: Record<string, string> = { ...extra };
+  if (authToken) {
+    headers.Authorization = `Bearer ${authToken}`;
+  }
+  return headers;
+}
+
+export async function loginWithCredentials(
+  identifier: string,
+  password: string
+): Promise<{ ok: true; session: AuthSession } | { ok: false; error: string }> {
+  try {
+    const res = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ identifier, password }),
+    });
+    const data = (await res.json()) as {
+      ok?: boolean;
+      session?: AuthSession;
+      error?: string;
+    };
+    if (!res.ok || !data.ok || !data.session) {
+      return { ok: false, error: data.error || 'Sign-in failed.' };
+    }
+    return { ok: true, session: data.session };
+  } catch {
+    return { ok: false, error: 'Unable to reach authentication server.' };
+  }
+}
+
+export async function signUpAccount(payload: {
+  userId: string;
+  fullName: string;
+  email: string;
+  mobileNumber: string;
+  accessType: Exclude<AccessType, 'tenant'>;
+  password: string;
+  masterAdminPin?: string;
+}): Promise<{ ok: true; session: AuthSession } | { ok: false; error: string }> {
+  try {
+    const res = await fetch('/api/auth/signup', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = (await res.json()) as {
+      ok?: boolean;
+      session?: AuthSession;
+      error?: string;
+    };
+    if (!res.ok || !data.ok || !data.session) {
+      return { ok: false, error: data.error || 'Sign-up failed.' };
+    }
+    return { ok: true, session: data.session };
+  } catch {
+    return { ok: false, error: 'Unable to reach authentication server.' };
+  }
+}
+
+export async function resetPasswordWithIdentifier(payload: {
+  identifier: string;
+  newPassword: string;
+}): Promise<{ ok: true; message: string } | { ok: false; error: string }> {
+  try {
+    const res = await fetch('/api/auth/reset-password', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = (await res.json()) as {
+      ok?: boolean;
+      message?: string;
+      error?: string;
+    };
+    if (!res.ok || !data.ok) {
+      return { ok: false, error: data.error || 'Password reset failed.' };
+    }
+    return {
+      ok: true,
+      message: data.message || 'Password updated. You can sign in now.',
+    };
+  } catch {
+    return { ok: false, error: 'Unable to reach authentication server.' };
+  }
+}
+
+export async function forceResetFirstPassword(
+  authToken: string,
+  newPassword: string
+): Promise<{ ok: true; session: AuthSession } | { ok: false; error: string }> {
+  try {
+    const res = await fetch('/api/auth/force-reset-password', {
+      method: 'POST',
+      headers: getAuthFetchHeaders(authToken, { 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ newPassword }),
+    });
+    const data = (await res.json()) as {
+      ok?: boolean;
+      session?: AuthSession;
+      error?: string;
+    };
+    if (!res.ok || !data.ok || !data.session) {
+      return { ok: false, error: data.error || 'Failed setting new password.' };
+    }
+    return { ok: true, session: data.session };
+  } catch {
+    return { ok: false, error: 'Unable to reach authentication server.' };
+  }
+}
+
+export async function changeAccountPassword(
+  authToken: string,
+  currentPassword: string,
+  newPassword: string
+): Promise<{ ok: true; message: string } | { ok: false; error: string }> {
+  try {
+    const res = await fetch('/api/auth/change-password', {
+      method: 'POST',
+      headers: getAuthFetchHeaders(authToken, { 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ currentPassword, newPassword }),
+    });
+    const data = (await res.json()) as {
+      ok?: boolean;
+      message?: string;
+      error?: string;
+    };
+    if (!res.ok || !data.ok) {
+      return { ok: false, error: data.error || 'Failed changing password.' };
+    }
+    return { ok: true, message: data.message || 'Password changed successfully.' };
+  } catch {
+    return { ok: false, error: 'Unable to reach authentication server.' };
+  }
+}
+
+export async function resolveBiometricLogin(
+  identifier: string
+): Promise<{ ok: true; session: AuthSession } | { ok: false; error: string }> {
+  try {
+    const res = await fetch('/api/auth/biometric-resolve', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ identifier }),
+    });
+    const data = (await res.json()) as {
+      ok?: boolean;
+      session?: AuthSession;
+      error?: string;
+    };
+    if (!res.ok || !data.ok || !data.session) {
+      return { ok: false, error: data.error || 'Biometric sign-in failed.' };
+    }
+    return { ok: true, session: data.session };
+  } catch {
+    return { ok: false, error: 'Unable to reach authentication server.' };
+  }
+}
+
+export async function provisionTenantPortalAccount(
+  authToken: string,
+  payload: {
+    tenantId: string;
+    unitId: string;
+    fullName: string;
+    mobileNumber: string;
+    oneTimePassword: string;
+  }
+): Promise<{ ok: true; user: AppUserAccount } | { ok: false; error: string }> {
+  try {
+    const res = await fetch('/api/auth/tenant-provision', {
+      method: 'POST',
+      headers: getAuthFetchHeaders(authToken, { 'Content-Type': 'application/json' }),
+      body: JSON.stringify(payload),
+    });
+    const data = (await res.json()) as {
+      ok?: boolean;
+      user?: AppUserAccount;
+      error?: string;
+    };
+    if (!res.ok || !data.ok || !data.user) {
+      return {
+        ok: false,
+        error: data.error || 'Failed provisioning tenant portal login.',
+      };
+    }
+    return { ok: true, user: data.user };
+  } catch {
+    return { ok: false, error: 'Unable to reach authentication server.' };
+  }
+}
+
+export async function revokeTenantPortalAccount(
+  authToken: string,
+  payload: { tenantId: string; mobileNumber?: string }
+): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const res = await fetch('/api/auth/tenant-revoke', {
+      method: 'POST',
+      headers: getAuthFetchHeaders(authToken, { 'Content-Type': 'application/json' }),
+      body: JSON.stringify(payload),
+    });
+    const data = (await res.json()) as { ok?: boolean; error?: string };
+    return { ok: Boolean(res.ok && data.ok), error: data.error };
+  } catch {
+    return { ok: false, error: 'Unable to reach authentication server.' };
+  }
+}
+
+export async function fetchMasterAdminPin(
+  authToken: string
+): Promise<{ ok: true; masterAdminPin: string } | { ok: false; error: string }> {
+  try {
+    const res = await fetch('/api/auth/master-pin', {
+      headers: getAuthFetchHeaders(authToken),
+    });
+    const data = (await res.json()) as {
+      ok?: boolean;
+      masterAdminPin?: string;
+      error?: string;
+    };
+    if (!res.ok || !data.ok || !data.masterAdminPin) {
+      return { ok: false, error: data.error || 'Unable to load Master Admin PIN.' };
+    }
+    return { ok: true, masterAdminPin: data.masterAdminPin };
+  } catch {
+    return { ok: false, error: 'Unable to reach server.' };
+  }
+}
+
+export async function updateMasterAdminPin(
+  authToken: string,
+  payload: { mode: 'generate' | 'custom'; customPin?: string }
+): Promise<{ ok: true; masterAdminPin: string } | { ok: false; error: string }> {
+  try {
+    const res = await fetch('/api/auth/master-pin', {
+      method: 'POST',
+      headers: getAuthFetchHeaders(authToken, { 'Content-Type': 'application/json' }),
+      body: JSON.stringify(payload),
+    });
+    const data = (await res.json()) as {
+      ok?: boolean;
+      masterAdminPin?: string;
+      error?: string;
+    };
+    if (!res.ok || !data.ok || !data.masterAdminPin) {
+      return { ok: false, error: data.error || 'Unable to update Master Admin PIN.' };
+    }
+    return { ok: true, masterAdminPin: data.masterAdminPin };
+  } catch {
+    return { ok: false, error: 'Unable to reach server.' };
   }
 }

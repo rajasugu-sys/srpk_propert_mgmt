@@ -49,6 +49,8 @@ interface InvoicesViewProps {
   onChangeBillingMonth: (month: string) => void;
   onCreateInvoice: (invoice: InvoiceRecord) => void;
   onUpdateInvoice: (invoice: InvoiceRecord) => void;
+  isReadOnly?: boolean;
+  senderSignature?: string;
 }
 
 const ALL_STATUSES: PaymentStatus[] = [
@@ -87,6 +89,8 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
   onChangeBillingMonth,
   onCreateInvoice,
   onUpdateInvoice,
+  isReadOnly = false,
+  senderSignature = 'SRKP Rental Management',
 }) => {
   const [floorFilter, setFloorFilter] = useState<string>('ALL');
   const [unitFilter, setUnitFilter] = useState<string>('ALL');
@@ -530,7 +534,11 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
   };
 
   const copyWhatsAppText = async (invoice: InvoiceRecord) => {
-    const msg = formatWhatsAppInvoiceMessage(invoice, settings.merchant_upi_id);
+    const msg = formatWhatsAppInvoiceMessage(
+      invoice,
+      settings.merchant_upi_id,
+      senderSignature
+    );
     try {
       await navigator.clipboard.writeText(msg);
       setCopiedKey(invoice.id);
@@ -634,32 +642,34 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-2">
-              <button
-                type="button"
-                onClick={handleGenerateSingle}
-                disabled={occupiedUnits.length === 0}
-                className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-[#489E44] px-3 py-2.5 text-xs font-bold text-white hover:bg-[#3E8E41] disabled:opacity-50 cursor-pointer min-h-[40px]"
-              >
-                <Plus className="w-3.5 h-3.5 shrink-0" />
-                <span className="truncate">
-                  {unitFilter !== 'ALL'
-                    ? `Generate (${
-                        units.find((u) => u.unit_id === unitFilter)?.unit_name || 'Unit'
-                      })`
-                    : 'Generate Unit Bill'}
-                </span>
-              </button>
+            {!isReadOnly && (
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={handleGenerateSingle}
+                  disabled={occupiedUnits.length === 0}
+                  className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-[#489E44] px-3 py-2.5 text-xs font-bold text-white hover:bg-[#3E8E41] disabled:opacity-50 cursor-pointer min-h-[40px]"
+                >
+                  <Plus className="w-3.5 h-3.5 shrink-0" />
+                  <span className="truncate">
+                    {unitFilter !== 'ALL'
+                      ? `Generate (${
+                          units.find((u) => u.unit_id === unitFilter)?.unit_name || 'Unit'
+                        })`
+                      : 'Generate Unit Bill'}
+                  </span>
+                </button>
 
-              <button
-                type="button"
-                onClick={handleGenerateAllMissing}
-                disabled={occupiedUnits.length === 0}
-                className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-[#0f172a] px-3 py-2.5 text-xs font-bold text-white hover:bg-slate-800 disabled:opacity-50 cursor-pointer min-h-[40px]"
-              >
-                <span className="truncate">Generate All Missing</span>
-              </button>
-            </div>
+                <button
+                  type="button"
+                  onClick={handleGenerateAllMissing}
+                  disabled={occupiedUnits.length === 0}
+                  className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-[#0f172a] px-3 py-2.5 text-xs font-bold text-white hover:bg-slate-800 disabled:opacity-50 cursor-pointer min-h-[40px]"
+                >
+                  <span className="truncate">Generate All Missing</span>
+                </button>
+              </div>
+            )}
 
             {genWarning && (
               <div className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-[11px] font-semibold text-amber-900">
@@ -704,7 +714,8 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
               {filteredInvoices.map((inv) => {
                 const waText = formatWhatsAppInvoiceMessage(
                   inv,
-                  settings.merchant_upi_id
+                  settings.merchant_upi_id,
+                  senderSignature
                 );
                 const waHref = `https://wa.me/${normalizeWhatsAppDigits(
                   inv.whatsapp_phone
@@ -790,7 +801,7 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
                         <div className="inline-flex rounded-lg bg-gray-200/80 p-0.5">
                           <button
                             type="button"
-                            disabled={inv.is_locked}
+                            disabled={inv.is_locked || isReadOnly}
                             onClick={() => handleToggleEbCollectionMode(inv, true)}
                             className={`px-2 py-1 text-[10px] font-bold rounded-md cursor-pointer disabled:cursor-not-allowed ${
                               inv.eb_paid_to_owner
@@ -802,7 +813,7 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
                           </button>
                           <button
                             type="button"
-                            disabled={inv.is_locked}
+                            disabled={inv.is_locked || isReadOnly}
                             onClick={() => handleToggleEbCollectionMode(inv, false)}
                             className={`px-2 py-1 text-[10px] font-bold rounded-md cursor-pointer disabled:cursor-not-allowed ${
                               !inv.eb_paid_to_owner
@@ -842,19 +853,21 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
                     </div>
 
                     <div className="grid grid-cols-2 gap-2">
-                      <button
-                        type="button"
-                        disabled={inv.is_locked}
-                        onClick={() => openEditStatusModal(inv)}
-                        className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs font-bold text-[#0f172a] hover:bg-gray-50 disabled:opacity-45 disabled:cursor-not-allowed cursor-pointer min-h-[38px]"
-                      >
-                        {inv.is_locked ? (
-                          <Lock className="w-3.5 h-3.5 text-gray-400" />
-                        ) : (
-                          <Pencil className="w-3.5 h-3.5 text-[#489E44]" />
-                        )}
-                        <span>{inv.is_locked ? 'Locked' : 'Update Status'}</span>
-                      </button>
+                      {!isReadOnly && (
+                        <button
+                          type="button"
+                          disabled={inv.is_locked}
+                          onClick={() => openEditStatusModal(inv)}
+                          className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs font-bold text-[#0f172a] hover:bg-gray-50 disabled:opacity-45 disabled:cursor-not-allowed cursor-pointer min-h-[38px]"
+                        >
+                          {inv.is_locked ? (
+                            <Lock className="w-3.5 h-3.5 text-gray-400" />
+                          ) : (
+                            <Pencil className="w-3.5 h-3.5 text-[#489E44]" />
+                          )}
+                          <span>{inv.is_locked ? 'Locked' : 'Update Status'}</span>
+                        </button>
+                      )}
 
                       <button
                         type="button"
@@ -874,15 +887,17 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
                         <span>Print</span>
                       </button>
 
-                      <a
-                        href={waHref}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-[#489E44] px-3 py-2 text-xs font-bold text-white hover:bg-[#3E8E41] min-h-[38px]"
-                      >
-                        <MessageSquare className="w-3.5 h-3.5" />
-                        <span>WhatsApp</span>
-                      </a>
+                      {!isReadOnly && (
+                        <a
+                          href={waHref}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-[#489E44] px-3 py-2 text-xs font-bold text-white hover:bg-[#3E8E41] min-h-[38px]"
+                        >
+                          <MessageSquare className="w-3.5 h-3.5" />
+                          <span>WhatsApp</span>
+                        </a>
+                      )}
                     </div>
                   </article>
                 );
@@ -1282,40 +1297,45 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
                     <span>Print Invoice</span>
                   </button>
 
-                  <a
-                    href={`https://wa.me/${normalizeWhatsAppDigits(
-                      activeModalInvoice.whatsapp_phone
-                    )}?text=${encodeURIComponent(
-                      formatWhatsAppInvoiceMessage(
-                        activeModalInvoice,
-                        settings.merchant_upi_id
-                      )
-                    )}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="w-full inline-flex items-center justify-center gap-1.5 rounded-xl bg-[#489E44] px-3 py-2 text-xs font-bold text-white hover:bg-[#3E8E41] min-h-[40px]"
-                  >
-                    <MessageSquare className="w-3.5 h-3.5" />
-                    <span>Send via WhatsApp</span>
-                  </a>
+                  {!isReadOnly && (
+                    <>
+                      <a
+                        href={`https://wa.me/${normalizeWhatsAppDigits(
+                          activeModalInvoice.whatsapp_phone
+                        )}?text=${encodeURIComponent(
+                          formatWhatsAppInvoiceMessage(
+                            activeModalInvoice,
+                            settings.merchant_upi_id,
+                            senderSignature
+                          )
+                        )}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="w-full inline-flex items-center justify-center gap-1.5 rounded-xl bg-[#489E44] px-3 py-2 text-xs font-bold text-white hover:bg-[#3E8E41] min-h-[40px]"
+                      >
+                        <MessageSquare className="w-3.5 h-3.5" />
+                        <span>Send via WhatsApp</span>
+                      </a>
 
-                  <button
-                    type="button"
-                    onClick={() => copyWhatsAppText(activeModalInvoice)}
-                    className="w-full inline-flex items-center justify-center gap-1.5 rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs font-bold text-gray-700 hover:bg-gray-50 cursor-pointer min-h-[40px]"
-                  >
-                    {copiedKey === activeModalInvoice.id ? (
-                      <>
-                        <Check className="w-3.5 h-3.5 text-[#489E44]" />
-                        <span>Message Copied</span>
-                      </>
-                    ) : (
-                      <>
-                        <Copy className="w-3.5 h-3.5" />
-                        <span>Copy WhatsApp Text</span>
-                      </>
-                    )}
-                  </button>
+                      <button
+                        type="button"
+                        onClick={() => copyWhatsAppText(activeModalInvoice)}
+                        className="w-full inline-flex items-center justify-center gap-1.5 rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs font-bold text-gray-700 hover:bg-gray-50 cursor-pointer min-h-[40px]"
+                      >
+                        {copiedKey === activeModalInvoice.id ? (
+                          <>
+                            <Check className="w-3.5 h-3.5 text-[#489E44]" />
+                            <span>Message Copied</span>
+                          </>
+                        ) : (
+                          <>
+                            <Copy className="w-3.5 h-3.5" />
+                            <span>Copy WhatsApp Text</span>
+                          </>
+                        )}
+                      </button>
+                    </>
+                  )}
                 </div>
               </div>
             </div>

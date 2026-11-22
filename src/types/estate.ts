@@ -147,11 +147,38 @@ export interface InvoiceRecord {
   closed_at: string | null;
 }
 
-export type UserRole = 'Owner';
+export type AccessType = 'admin' | 'viewer' | 'tenant';
+export type AccountAccessStatus = 'active' | 'revoked';
+export type UserRole = 'Admin' | 'Viewer' | 'Tenant';
+
+export interface AppUserAccount {
+  user_id: string;
+  full_name: string;
+  email: string;
+  mobile_number: string;
+  access_type: AccessType;
+  access_status: AccountAccessStatus;
+  must_reset_password: boolean;
+  tenant_id?: string | null;
+  unit_id?: string | null;
+  password_salt?: string;
+  password_hash?: string;
+  created_at: string;
+  updated_at: string;
+}
 
 export interface AuthSession {
+  userId: string;
+  fullName: string;
+  email: string;
+  mobileNumber: string;
+  accessType: AccessType;
+  accessStatus: AccountAccessStatus;
+  mustResetPassword: boolean;
+  tenantId?: string | null;
+  unitId?: string | null;
+  authToken?: string;
   role: UserRole;
-  accountLabel?: 'Owner 1' | 'Owner 2';
   username: string;
   loginMethod: 'password' | 'biometric';
   authenticatedAt: string;
@@ -176,6 +203,7 @@ export interface AppSettings {
   last_synced_at: string | null;
   auth_credentials?: RoleCredentialsConfig;
   auto_lock_timer?: AutoLockTimerMode;
+  master_admin_pin?: string;
 }
 
 export type SyncStatus = 'Synced' | 'Syncing...' | 'Offline/Error';
@@ -250,6 +278,7 @@ export interface EstateDataset {
   invoices: InvoiceRecord[];
   expenses: ExpenseRecord[];
   requests?: MaintenanceRequest[];
+  users?: AppUserAccount[];
   settings: AppSettings;
 }
 

@@ -69,6 +69,8 @@ interface MasterDashboardProps {
   onQuickLock: () => void;
   onOpenOnboardUnit: (unitId?: string) => void;
   onOpenMoveOutUnit: (unitId: string) => void;
+  isReadOnly?: boolean;
+  senderSignature?: string;
 }
 
 type TenantFilterMode = 'active' | 'expiring' | 'vacated' | 'all';
@@ -124,6 +126,8 @@ export const MasterDashboard: React.FC<MasterDashboardProps> = ({
   onQuickLock,
   onOpenOnboardUnit,
   onOpenMoveOutUnit,
+  isReadOnly = false,
+  senderSignature = 'SRKP Rental Management',
 }) => {
   const [tenantFilter, setTenantFilter] = useState<TenantFilterMode>('active');
   const [showAlertsModal, setShowAlertsModal] = useState(false);
@@ -421,10 +425,10 @@ export const MasterDashboard: React.FC<MasterDashboardProps> = ({
               </div>
               <div className="flex items-center gap-1.5 mt-0.5">
                 <span className="text-base font-bold tracking-tight text-white truncate">
-                  Hi, Owner
+                  Hi, {session.fullName || session.username}
                 </span>
                 <span className="rounded-full bg-[#FACC15] px-2 py-0.5 text-[10px] font-extrabold text-[#0f172a] leading-none shrink-0">
-                  Owner
+                  {session.accessType === 'admin' ? 'Admin' : 'Viewer'}
                 </span>
               </div>
             </div>
@@ -455,22 +459,24 @@ export const MasterDashboard: React.FC<MasterDashboardProps> = ({
               <Lock className="w-4 h-4" />
             </button>
 
-            <button
-              type="button"
-              onClick={onOpenSettings}
-              className="flex h-8 w-8 sm:h-9 sm:w-9 items-center justify-center rounded-full bg-white/15 text-white hover:bg-white/25 transition-colors cursor-pointer"
-              title="Settings & Sync"
-              aria-label="Open Settings"
-            >
-              <Settings className="w-4 h-4" />
-            </button>
+            {!isReadOnly && (
+              <button
+                type="button"
+                onClick={onOpenSettings}
+                className="flex h-8 w-8 sm:h-9 sm:w-9 items-center justify-center rounded-full bg-white/15 text-white hover:bg-white/25 transition-colors cursor-pointer"
+                title="Settings & Sync"
+                aria-label="Open Settings"
+              >
+                <Settings className="w-4 h-4" />
+              </button>
+            )}
 
             <button
               type="button"
               onClick={onOpenProfile}
               className="flex h-8 w-8 sm:h-9 sm:w-9 items-center justify-center rounded-full bg-white text-[#3E8E41] font-bold text-xs shadow-xs hover:bg-emerald-50 transition-colors cursor-pointer"
-              title={`Profile (${session.username})`}
-              aria-label="Open Owner Profile"
+              title={`Profile (${session.fullName || session.username})`}
+              aria-label="Open User Profile"
             >
               <User className="w-4 h-4" />
             </button>
@@ -594,15 +600,17 @@ export const MasterDashboard: React.FC<MasterDashboardProps> = ({
             >
               <Download className="w-4 h-4" />
             </button>
-            <button
-              type="button"
-              onClick={() => onOpenOnboardUnit(vacantUnits[0]?.unit_id)}
-              className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#489E44] text-white hover:bg-[#3E8E41] shadow-xs cursor-pointer"
-              title="Onboard New Tenant"
-              aria-label="Onboard New Tenant"
-            >
-              <Plus className="w-5 h-5" />
-            </button>
+            {!isReadOnly && (
+              <button
+                type="button"
+                onClick={() => onOpenOnboardUnit(vacantUnits[0]?.unit_id)}
+                className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#489E44] text-white hover:bg-[#3E8E41] shadow-xs cursor-pointer"
+                title="Onboard New Tenant"
+                aria-label="Onboard New Tenant"
+              >
+                <Plus className="w-5 h-5" />
+              </button>
+            )}
           </div>
         </div>
 
@@ -632,7 +640,7 @@ export const MasterDashboard: React.FC<MasterDashboardProps> = ({
             <div className="text-xs font-semibold text-gray-600">
               No tenants in this filter.
             </div>
-            {vacantUnits.length > 0 && (
+            {!isReadOnly && vacantUnits.length > 0 && (
               <button
                 type="button"
                 onClick={() => onOpenOnboardUnit(vacantUnits[0]?.unit_id)}
@@ -749,13 +757,15 @@ export const MasterDashboard: React.FC<MasterDashboardProps> = ({
                         {prop?.property_name} · {u.floor}
                       </div>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => onOpenOnboardUnit(u.unit_id)}
-                      className="rounded-xl bg-[#489E44] px-3 py-1.5 text-[11px] font-semibold text-white hover:bg-[#3E8E41] shrink-0 cursor-pointer"
-                    >
-                      + Onboard
-                    </button>
+                    {!isReadOnly && (
+                      <button
+                        type="button"
+                        onClick={() => onOpenOnboardUnit(u.unit_id)}
+                        className="rounded-xl bg-[#489E44] px-3 py-1.5 text-[11px] font-semibold text-white hover:bg-[#3E8E41] shrink-0 cursor-pointer"
+                      >
+                        + Onboard
+                      </button>
+                    )}
                   </div>
                 );
               })}
@@ -821,6 +831,7 @@ export const MasterDashboard: React.FC<MasterDashboardProps> = ({
                       propertyName: propName,
                       unitName,
                       remainingLabel: tenureInfo.label,
+                      senderSignature,
                     })
                   )}`;
                   const ownerWaHref = `https://wa.me/${normalizeWhatsAppDigits(
@@ -832,6 +843,7 @@ export const MasterDashboard: React.FC<MasterDashboardProps> = ({
                       propertyName: propName,
                       unitName,
                       remainingLabel: tenureInfo.label,
+                      senderSignature,
                     })
                   )}`;
 
@@ -857,26 +869,28 @@ export const MasterDashboard: React.FC<MasterDashboardProps> = ({
                         </span>
                       </div>
 
-                      <div className="flex gap-2">
-                        <a
-                          href={tenantWaHref}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="flex-1 inline-flex items-center justify-center gap-1 rounded-xl bg-[#489E44] px-2.5 py-2 text-[11px] font-semibold text-white hover:bg-[#3E8E41]"
-                        >
-                          <MessageSquare className="w-3.5 h-3.5" />
-                          <span>Remind Tenant</span>
-                        </a>
-                        <a
-                          href={ownerWaHref}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="flex-1 inline-flex items-center justify-center gap-1 rounded-xl border border-gray-200 bg-white px-2.5 py-2 text-[11px] font-semibold text-[#0f172a] hover:bg-gray-50"
-                        >
-                          <MessageSquare className="w-3.5 h-3.5 text-[#489E44]" />
-                          <span>Alert Owner</span>
-                        </a>
-                      </div>
+                      {!isReadOnly && (
+                        <div className="flex gap-2">
+                          <a
+                            href={tenantWaHref}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="flex-1 inline-flex items-center justify-center gap-1 rounded-xl bg-[#489E44] px-2.5 py-2 text-[11px] font-semibold text-white hover:bg-[#3E8E41]"
+                          >
+                            <MessageSquare className="w-3.5 h-3.5" />
+                            <span>Remind Tenant</span>
+                          </a>
+                          <a
+                            href={ownerWaHref}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="flex-1 inline-flex items-center justify-center gap-1 rounded-xl border border-gray-200 bg-white px-2.5 py-2 text-[11px] font-semibold text-[#0f172a] hover:bg-gray-50"
+                          >
+                            <MessageSquare className="w-3.5 h-3.5 text-[#489E44]" />
+                            <span>Alert Owner</span>
+                          </a>
+                        </div>
+                      )}
                     </div>
                   );
                 })}
@@ -1006,10 +1020,10 @@ export const MasterDashboard: React.FC<MasterDashboardProps> = ({
                 className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-[#489E44] px-3 py-2.5 text-xs font-semibold text-white hover:bg-[#3E8E41] cursor-pointer"
               >
                 <Users className="w-4 h-4" />
-                <span>Edit &amp; Agreement</span>
+                <span>{isReadOnly ? 'View Tenant Info' : 'Edit & Agreement'}</span>
               </button>
 
-              {selectedTenantDetail.tenant.is_active && (
+              {!isReadOnly && selectedTenantDetail.tenant.is_active && (
                 <button
                   type="button"
                   onClick={() => {

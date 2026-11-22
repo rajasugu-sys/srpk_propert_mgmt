@@ -28,6 +28,7 @@ interface MaintenanceViewProps {
   onBack: () => void;
   onChangeBillingMonth: (month: string) => void;
   onSaveHouseMaintenanceBill: (bill: HouseMaintenanceBill, isEdit: boolean) => void;
+  isReadOnly?: boolean;
 }
 
 export const MaintenanceView: React.FC<MaintenanceViewProps> = ({
@@ -39,6 +40,7 @@ export const MaintenanceView: React.FC<MaintenanceViewProps> = ({
   onBack,
   onChangeBillingMonth,
   onSaveHouseMaintenanceBill,
+  isReadOnly = false,
 }) => {
   const [selectedPropertyId, setSelectedPropertyId] = useState<string>(
     initialPropertyId || properties[0]?.property_id || ''
@@ -156,7 +158,7 @@ export const MaintenanceView: React.FC<MaintenanceViewProps> = ({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedPropertyId) return;
+    if (isReadOnly || !selectedPropertyId) return;
 
     const bill: HouseMaintenanceBill = {
       id:
@@ -209,7 +211,13 @@ export const MaintenanceView: React.FC<MaintenanceViewProps> = ({
       {/* Curved White Lower Sheet */}
       <div className="bg-white rounded-t-[28px] -mt-5 pt-5 px-4 pb-24 min-h-[calc(100vh-120px)] space-y-5">
         <form onSubmit={handleSubmit} className="space-y-4">
-          {existingBill && (
+          {isReadOnly && (
+            <div className="rounded-2xl border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-xs font-semibold text-amber-900">
+              View-only mode: Building maintenance charges cannot be edited with Viewer access.
+            </div>
+          )}
+
+          {existingBill && !isReadOnly && (
             <div className="flex items-start gap-2 rounded-2xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
               <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
               <div>
@@ -263,21 +271,23 @@ export const MaintenanceView: React.FC<MaintenanceViewProps> = ({
                 </div>
               </div>
 
-              <label className="inline-flex items-center gap-1.5 rounded-xl bg-[#0f172a] px-3 py-1.5 text-[11px] font-semibold text-white hover:bg-slate-800 cursor-pointer">
-                {isScanningOcr ? (
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                ) : (
-                  <Camera className="w-3.5 h-3.5 text-[#489E44]" />
-                )}
-                <span>{isScanningOcr ? 'Extracting...' : 'Scan Common EB'}</span>
-                <input
-                  type="file"
-                  accept="image/*"
-                  className="hidden"
-                  onChange={handleUploadCommonEbScreenshot}
-                  disabled={isScanningOcr}
-                />
-              </label>
+              {!isReadOnly && (
+                <label className="inline-flex items-center gap-1.5 rounded-xl bg-[#0f172a] px-3 py-1.5 text-[11px] font-semibold text-white hover:bg-slate-800 cursor-pointer">
+                  {isScanningOcr ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Camera className="w-3.5 h-3.5 text-[#489E44]" />
+                  )}
+                  <span>{isScanningOcr ? 'Extracting...' : 'Scan Common EB'}</span>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={handleUploadCommonEbScreenshot}
+                    disabled={isScanningOcr}
+                  />
+                </label>
+              )}
             </div>
 
             <input
@@ -285,9 +295,10 @@ export const MaintenanceView: React.FC<MaintenanceViewProps> = ({
               type="number"
               min={0}
               step="1"
+              disabled={isReadOnly}
               value={commonEbAmount}
               onChange={(e) => setCommonEbAmount(e.target.value)}
-              className="w-full rounded-xl border border-gray-200 bg-white px-3.5 py-2.5 text-base font-mono tabular-nums font-bold text-[#0f172a]"
+              className="w-full rounded-xl border border-gray-200 bg-white px-3.5 py-2.5 text-base font-mono tabular-nums font-bold text-[#0f172a] disabled:bg-gray-100 disabled:text-gray-600"
             />
 
             {ocrMessage && (
@@ -316,48 +327,52 @@ export const MaintenanceView: React.FC<MaintenanceViewProps> = ({
                       <span className="font-mono font-semibold text-[#0f172a]">
                         {formatINR(chg.charge_amount)}
                       </span>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setAdditionalCharges((prev) =>
-                            prev.filter((c) => c.id !== chg.id)
-                          )
-                        }
-                        className="text-gray-400 hover:text-rose-600 cursor-pointer"
-                        aria-label="Remove charge"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
+                      {!isReadOnly && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setAdditionalCharges((prev) =>
+                              prev.filter((c) => c.id !== chg.id)
+                            )
+                          }
+                          className="text-gray-400 hover:text-rose-600 cursor-pointer"
+                          aria-label="Remove charge"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      )}
                     </div>
                   </div>
                 ))}
               </div>
             )}
 
-            <div className="flex gap-2">
-              <input
-                type="text"
-                value={newChargeName}
-                onChange={(e) => setNewChargeName(e.target.value)}
-                placeholder="Sump / Tank cleaning..."
-                className="flex-1 min-w-0 rounded-xl border border-gray-200 px-3 py-2 text-xs text-[#0f172a]"
-              />
-              <input
-                type="number"
-                min={0}
-                value={newChargeAmount}
-                onChange={(e) => setNewChargeAmount(e.target.value)}
-                placeholder="INR"
-                className="w-20 rounded-xl border border-gray-200 px-2.5 py-2 text-xs font-mono text-[#0f172a]"
-              />
-              <button
-                type="button"
-                onClick={handleAddCharge}
-                className="inline-flex items-center gap-1 rounded-xl bg-gray-100 px-3 py-2 text-xs font-semibold text-[#0f172a] hover:bg-gray-200 cursor-pointer shrink-0"
-              >
-                <Plus className="w-3.5 h-3.5" />
-              </button>
-            </div>
+            {!isReadOnly && (
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={newChargeName}
+                  onChange={(e) => setNewChargeName(e.target.value)}
+                  placeholder="Sump / Tank cleaning..."
+                  className="flex-1 min-w-0 rounded-xl border border-gray-200 px-3 py-2 text-xs text-[#0f172a]"
+                />
+                <input
+                  type="number"
+                  min={0}
+                  value={newChargeAmount}
+                  onChange={(e) => setNewChargeAmount(e.target.value)}
+                  placeholder="INR"
+                  className="w-20 rounded-xl border border-gray-200 px-2.5 py-2 text-xs font-mono text-[#0f172a]"
+                />
+                <button
+                  type="button"
+                  onClick={handleAddCharge}
+                  className="inline-flex items-center gap-1 rounded-xl bg-gray-100 px-3 py-2 text-xs font-semibold text-[#0f172a] hover:bg-gray-200 cursor-pointer shrink-0"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
           </div>
 
           {savedToast && (
@@ -382,15 +397,17 @@ export const MaintenanceView: React.FC<MaintenanceViewProps> = ({
             </div>
           </div>
 
-          <button
-            type="submit"
-            className="w-full inline-flex items-center justify-center gap-2 rounded-2xl bg-[#489E44] px-5 py-3 text-sm font-semibold text-white hover:bg-[#3E8E41] cursor-pointer shadow-xs"
-          >
-            <Wrench className="w-4 h-4" />
-            <span>
-              {existingBill ? 'Update House Bill' : 'Save Building Maint Bill'}
-            </span>
-          </button>
+          {!isReadOnly && (
+            <button
+              type="submit"
+              className="w-full inline-flex items-center justify-center gap-2 rounded-2xl bg-[#489E44] px-5 py-3 text-sm font-semibold text-white hover:bg-[#3E8E41] cursor-pointer shadow-xs"
+            >
+              <Wrench className="w-4 h-4" />
+              <span>
+                {existingBill ? 'Update House Bill' : 'Save Building Maint Bill'}
+              </span>
+            </button>
+          )}
         </form>
 
         {/* Month Ledger */}

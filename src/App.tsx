@@ -13,12 +13,13 @@ import { AddExpensesView } from './components/AddExpensesView';
 import { AnnouncementsView } from './components/AnnouncementsView';
 import { ExpensesView } from './components/ExpensesView';
 import { InvoicesView } from './components/InvoicesView';
-import { LoginGate } from './components/LoginGate';
+import { ForceResetPasswordScreen, LoginGate } from './components/LoginGate';
 import { MaintenanceView } from './components/MaintenanceView';
 import { MasterDashboard } from './components/MasterDashboard';
 import { ProfileView } from './components/ProfileView';
 import { InstallAppModal, OfflineIndicator } from './components/PWAControls';
 import { SettingsModal } from './components/SettingsModal';
+import { TenantAuthenticatedPortal } from './components/TenantAuthenticatedPortal';
 import { TenantLifecycleView } from './components/TenantLifecycleView';
 import { TenantPortalView } from './components/TenantPortalView';
 import { UnitsManagementView } from './components/UnitsManagementView';
@@ -26,12 +27,14 @@ import { UtilityMeterCapture } from './components/UtilityMeterCapture';
 import {
   clearHiddenAtTimestamp,
   evaluateSessionLockStatus,
+  getAuthFetchHeaders,
   isValidAutoLockMode,
   loadAutoLockTimerMode,
   loadPersistedAuthSession,
-  persistCredentialsCache,
+  provisionTenantPortalAccount,
   recordHiddenAtTimestamp,
   recordLastActivityTimestamp,
+  revokeTenantPortalAccount,
   saveAutoLockTimerMode,
   savePersistedAuthSession,
 } from './config/authConfig';
@@ -272,10 +275,6 @@ function migrateDataset(raw: EstateDataset): EstateDataset {
     ...(cleanRawSettings as Partial<AppSettings>),
   };
 
-  if (mergedSettings.auth_credentials) {
-    persistCredentialsCache(mergedSettings.auth_credentials);
-  }
-
   return {
     ...raw,
     tenants: Array.isArray(raw.tenants)
@@ -293,6 +292,7 @@ function migrateDataset(raw: EstateDataset): EstateDataset {
           migrateExpenseRecord(exp as unknown as Record<string, unknown>)
         )
       : INITIAL_EXPENSES,
+    users: Array.isArray(raw.users) ? raw.users : [],
     settings: mergedSettings,
   };
 }
@@ -713,62 +713,6 @@ export default function App() {
     []
   );
 
-  // 2. Hydrate from server-side /api/estate, fetch Sheets status, then Auto-Pull when authenticated
-  const fetchServerDataset = useCallback(async () => {
-    try {
-      const res = await fetch('/api/estate');
-      const payload = res.ok ? await res.json() : null;
-      if (
-        payload?.exists &&
-        Array.isArray(payload.data?.properties) &&
-        Array.isArray(payload.data?.units)
-      ) {
-        skipNextServerPut.current = true;
-        setDataset(migrateDataset(payload.data as EstateDataset));
-      }
-    } catch {
-      // keep local dataset
-    } finally {
-      hydratedFromServer.current = true;
-    }
-  }, []);
-
-  useEffect(() => {
-    try {
-      localStorage.removeItem('srpk_service_account_json');
-    } catch {
-      // ignore storage cleanup errors
-    }
-    void fetchServerDataset();
-    void isPlatformBiometricSupported().then(setBiometricSupported);
-  }, [fetchServerDataset]);
-
-  useEffect(() => {
-    if (!session || portalParams.isTenantPortal) return;
-    void (async () => {
-      const status = await fetchSheetsConfigStatus();
-      setSecretConfigured(status.secretConfigured);
-      await handlePullFromSheets({ silentOnFailureOrEmpty: true });
-    })();
-  }, [session, portalParams.isTenantPortal, handlePullFromSheets]);
-
-  const handleAuthenticated = async (nextSession: AuthSession) => {
-    setLockNotice(null);
-    savePersistedAuthSession(nextSession);
-    setSession(nextSession);
-    setBiometricPromptFeedback(null);
-
-    if (nextSession.loginMethod === 'password') {
-      const supported = await isPlatformBiometricSupported();
-      setBiometricSupported(supported);
-      if (supported && !isBiometricEnrolledForUser(nextSession.username)) {
-        setShowBiometricPrompt(true);
-      }
-    } else {
-      setShowBiometricPrompt(false);
-    }
-  };
-
   const lockApp = useCallback((noticeMessage: string) => {
     savePersistedAuthSession(null);
     setSession(null);
@@ -779,6 +723,75 @@ export default function App() {
     setActiveView('dashboard');
     setLockNotice(noticeMessage);
   }, []);
+
+  // 2. Hydrate from server-side /api/estate, fetch Sheets status, then Auto-Pull when authenticated
+  const fetchServerDataset = useCallback(
+    async (authToken?: string) => {
+      if (!authToken) return;
+      try {
+        const res = await fetch('/api/estate', {
+          headers: getAuthFetchHeaders(authToken),
+        });
+        if (res.status === 401 || res.status === 403) {
+          const errBody = (await res.json().catch(() => ({}))) as { error?: string };
+          lockApp(errBody.error || 'Session expired or access revoked.');
+          return;
+        }
+        const payload = res.ok ? await res.json() : null;
+        if (
+          payload?.exists &&
+          Array.isArray(payload.data?.properties) &&
+          Array.isArray(payload.data?.units)
+        ) {
+          skipNextServerPut.current = true;
+          setDataset(migrateDataset(payload.data as EstateDataset));
+        }
+      } catch {
+        // keep local dataset
+      } finally {
+        hydratedFromServer.current = true;
+      }
+    },
+    [lockApp]
+  );
+
+  useEffect(() => {
+    try {
+      localStorage.removeItem('srpk_service_account_json');
+    } catch {
+      // ignore storage cleanup errors
+    }
+    void isPlatformBiometricSupported().then(setBiometricSupported);
+  }, []);
+
+  useEffect(() => {
+    if (!session || session.mustResetPassword || portalParams.isTenantPortal) return;
+    void (async () => {
+      await fetchServerDataset(session.authToken);
+      if (session.accessType === 'admin' || session.accessType === 'viewer') {
+        const status = await fetchSheetsConfigStatus();
+        setSecretConfigured(status.secretConfigured);
+        await handlePullFromSheets({ silentOnFailureOrEmpty: true });
+      }
+    })();
+  }, [session, portalParams.isTenantPortal, fetchServerDataset, handlePullFromSheets]);
+
+  const handleAuthenticated = async (nextSession: AuthSession) => {
+    setLockNotice(null);
+    savePersistedAuthSession(nextSession);
+    setSession(nextSession);
+    setBiometricPromptFeedback(null);
+
+    if (nextSession.loginMethod === 'password' && !nextSession.mustResetPassword) {
+      const supported = await isPlatformBiometricSupported();
+      setBiometricSupported(supported);
+      if (supported && !isBiometricEnrolledForUser(nextSession.userId)) {
+        setShowBiometricPrompt(true);
+      }
+    } else {
+      setShowBiometricPrompt(false);
+    }
+  };
 
   const handleChangeAutoLockTimer = useCallback((mode: AutoLockTimerMode) => {
     saveAutoLockTimerMode(mode);
@@ -863,11 +876,11 @@ export default function App() {
   const handleEnableBiometricPrompt = async () => {
     if (!session) return;
     setBiometricPromptFeedback(null);
-    const res = await registerPlatformBiometric(session.username);
+    const res = await registerPlatformBiometric(session.userId, session.fullName);
     if (res.ok) {
       setShowBiometricPrompt(false);
       setPullFeedback(
-        `Biometric Quick Login enabled for ${session.username} on this device.`
+        `Biometric Quick Login enabled for ${session.fullName} on this device.`
       );
     } else {
       setBiometricPromptFeedback(
@@ -876,8 +889,9 @@ export default function App() {
     }
   };
 
-  // 3. Persist changes to localStorage AND server /api/estate
+  // 3. Persist changes to localStorage AND server /api/estate (Admin writes only)
   useEffect(() => {
+    if (session?.accessType === 'tenant') return;
     try {
       localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(dataset));
     } catch {
@@ -889,15 +903,18 @@ export default function App() {
       skipNextServerPut.current = false;
       return;
     }
+    if (session?.accessType !== 'admin' || !session.authToken) return;
 
     fetch('/api/estate', {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getAuthFetchHeaders(session.authToken, {
+        'Content-Type': 'application/json',
+      }),
       body: JSON.stringify(dataset),
     }).catch(() => {
       // keep local copy if server unreachable
     });
-  }, [dataset]);
+  }, [dataset, session?.accessType, session?.authToken]);
 
   // 4. Monthly Automated Browser Push Notification for Tenure Expiring Soon (<= 4 months)
   const dispatchTenureBrowserNotification = useCallback(
@@ -1036,6 +1053,7 @@ export default function App() {
   };
 
   const handlePushAllToSheets = async () => {
+    if (session?.accessType !== 'admin') return;
     setIsPushingAll(true);
     setSyncStatus('Syncing...');
 
@@ -1049,7 +1067,7 @@ export default function App() {
         httpStatus: res.httpStatus || (res.ok ? 200 : 403),
         tokenStatus: res.ok ? 'Active' : 'Auth Required',
         message: res.ok
-          ? `Pushed all 6 tables to Google Sheet (${SPREADSHEET_ID}).`
+          ? `Pushed all ${REQUIRED_SHEET_TABS.length} tables to Google Sheet (${SPREADSHEET_ID}).`
           : res.error || 'Failed to push all tables to Google Sheet.',
         testedAt: new Date().toISOString(),
         tabStatuses: res.tabStatuses,
@@ -1063,7 +1081,7 @@ export default function App() {
         settings: { ...prev.settings, last_synced_at: new Date().toISOString() },
       }));
       setPullFeedback(
-        `Synced all 6 tables to Google Sheet (${SPREADSHEET_ID})${
+        `Synced all ${REQUIRED_SHEET_TABS.length} tables to Google Sheet (${SPREADSHEET_ID})${
           res.createdTabs.length > 0
             ? ` and auto-created: ${res.createdTabs.join(', ')}`
             : ''
@@ -1078,6 +1096,7 @@ export default function App() {
 
   // Direct Sheets API v4 Live Table Auto-Push Helper
   const syncTableDirect = useCallback(async (table: SyncTable, rows: unknown[]) => {
+    if (session?.accessType !== 'admin') return;
     setSyncStatus('Syncing...');
     const res = await syncTableToGoogleSheet(table, rows);
     if (res.ok) {
@@ -1103,7 +1122,7 @@ export default function App() {
       });
       setPullFeedback(res.error || `Failed to auto-sync ${table} to Google Sheet.`);
     }
-  }, []);
+  }, [session?.accessType]);
 
   // OLTP Mutation Handlers — Properties (Houses)
   const handleSaveProperty = (property: PropertyHouse, isNew: boolean) => {
@@ -1180,6 +1199,7 @@ export default function App() {
   const handleCompleteOnboarding = (payload: {
     tenant: TenantRecord;
     unitUpdate: Unit;
+    oneTimePassword: string;
   }) => {
     const prevState = datasetRef.current;
     const nextTenants = [payload.tenant, ...prevState.tenants];
@@ -1196,6 +1216,24 @@ export default function App() {
     void (async () => {
       await syncTableDirect('Tenants', nextTenants);
       await syncTableDirect('Units', nextUnits);
+      if (session?.authToken && payload.oneTimePassword) {
+        const prov = await provisionTenantPortalAccount(session.authToken, {
+          tenantId: payload.tenant.id,
+          unitId: payload.unitUpdate.unit_id,
+          fullName: payload.tenant.full_name,
+          mobileNumber: payload.tenant.whatsapp_phone,
+          oneTimePassword: payload.oneTimePassword,
+        });
+        if (prov.ok) {
+          setPullFeedback(
+            `Tenant ${payload.tenant.full_name} onboarded & portal access activated (User ID: ${prov.user.user_id}).`
+          );
+        } else {
+          setPullFeedback(
+            `Tenant saved, but portal account setup failed: ${'error' in prov ? prov.error : 'Unknown error'}`
+          );
+        }
+      }
     })();
   };
 
@@ -1228,6 +1266,7 @@ export default function App() {
     final_refundable_amount: number;
   }) => {
     const prevState = datasetRef.current;
+    const targetTenant = prevState.tenants.find((t) => t.id === payload.tenantId);
     const nextTenants = prevState.tenants.map((t) =>
       t.id === payload.tenantId
         ? {
@@ -1254,6 +1293,17 @@ export default function App() {
     void (async () => {
       await syncTableDirect('Tenants', nextTenants);
       await syncTableDirect('Units', nextUnits);
+      if (session?.authToken) {
+        const rev = await revokeTenantPortalAccount(session.authToken, {
+          tenantId: payload.tenantId,
+          mobileNumber: targetTenant?.whatsapp_phone,
+        });
+        if (rev.ok) {
+          setPullFeedback(
+            `${targetTenant?.full_name || 'Tenant'} moved out and portal access revoked.`
+          );
+        }
+      }
     })();
   };
 
@@ -1480,13 +1530,47 @@ export default function App() {
   if (!session) {
     return (
       <LoginGate
-        settingsCredentials={dataset.settings.auth_credentials}
         lockNotice={lockNotice}
         onDismissNotice={() => setLockNotice(null)}
         onAuthenticated={(nextSession) => void handleAuthenticated(nextSession)}
       />
     );
   }
+
+  if (session.mustResetPassword) {
+    return (
+      <ForceResetPasswordScreen
+        session={session}
+        onPasswordUpdated={(updatedSession) => {
+          savePersistedAuthSession(updatedSession);
+          setSession(updatedSession);
+        }}
+        onSignOut={() => lockApp('Signed out.')}
+      />
+    );
+  }
+
+  if (session.accessType === 'tenant') {
+    return (
+      <TenantAuthenticatedPortal
+        session={session}
+        properties={dataset.properties}
+        units={dataset.units}
+        tenants={dataset.tenants}
+        utilityReadings={dataset.utilityReadings}
+        invoices={dataset.invoices}
+        settings={dataset.settings}
+        autoLockMode={autoLockTimer}
+        onChangeAutoLockMode={handleChangeAutoLockTimer}
+        onLockApp={(reason) => lockApp(reason || 'App locked.')}
+      />
+    );
+  }
+
+  const isReadOnly = session.accessType === 'viewer';
+  const senderSignature = session.fullName
+    ? `${session.fullName}, House Owner`
+    : 'SRKP Rental Management';
 
   return (
     <div className="min-h-screen w-full max-w-md mx-auto bg-gray-50 shadow-xl relative overflow-x-hidden text-[#0f172a] print:max-w-none print:bg-white print:shadow-none print:overflow-visible">
@@ -1502,7 +1586,7 @@ export default function App() {
                 Enable Fingerprint / Face ID Quick Login
               </div>
               <p className="text-[11px] text-gray-500 mt-0.5">
-                Sign in as {session.username} with one tap next time.
+                Sign in as {session.fullName || session.username} with one tap next time.
               </p>
               {biometricPromptFeedback && (
                 <p className="text-[11px] font-semibold text-rose-700 mt-1">
@@ -1592,17 +1676,23 @@ export default function App() {
             }}
             onOpenExpenses={() => setActiveView('expenses')}
             onOpenAnnouncements={() => setActiveView('announcements')}
-            onOpenSettings={() => setShowSettingsModal(true)}
+            onOpenSettings={() => {
+              if (!isReadOnly) setShowSettingsModal(true);
+            }}
             onOpenProfile={() => setActiveView('profile')}
             onQuickLock={() => lockApp('App locked.')}
             onOpenOnboardUnit={(unitId) => {
+              if (isReadOnly) return;
               setOnboardUnitId(unitId ?? null);
               setActiveView('tenants');
             }}
             onOpenMoveOutUnit={(unitId) => {
+              if (isReadOnly) return;
               setMoveOutUnitId(unitId);
               setActiveView('tenants');
             }}
+            isReadOnly={isReadOnly}
+            senderSignature={senderSignature}
           />
         )}
 
@@ -1619,6 +1709,7 @@ export default function App() {
             onDeleteProperty={handleDeleteProperty}
             onSaveUnit={handleSaveUnit}
             onDeleteUnit={handleDeleteUnit}
+            isReadOnly={isReadOnly}
           />
         )}
 
@@ -1641,6 +1732,9 @@ export default function App() {
             onCompleteOnboarding={handleCompleteOnboarding}
             onUpdateTenant={handleUpdateTenant}
             onCompleteMoveOut={handleCompleteMoveOut}
+            authToken={session.authToken}
+            isReadOnly={isReadOnly}
+            senderSignature={senderSignature}
           />
         )}
 
@@ -1654,6 +1748,7 @@ export default function App() {
             onBack={() => setActiveView('dashboard')}
             onChangeBillingMonth={setBillingMonth}
             onSaveHouseMaintenanceBill={handleSaveHouseMaintenanceBill}
+            isReadOnly={isReadOnly}
           />
         )}
 
@@ -1671,6 +1766,7 @@ export default function App() {
             initialUnitId={meterUnitId}
             onSaveUtilityReading={handleSaveUtilityReading}
             onSaveUtilityReadingsBatch={handleSaveUtilityReadingsBatch}
+            isReadOnly={isReadOnly}
           />
         )}
 
@@ -1690,6 +1786,8 @@ export default function App() {
             onChangeBillingMonth={setBillingMonth}
             onCreateInvoice={handleCreateInvoice}
             onUpdateInvoice={handleUpdateInvoice}
+            isReadOnly={isReadOnly}
+            senderSignature={senderSignature}
           />
         )}
 
@@ -1702,9 +1800,13 @@ export default function App() {
             ownerWhatsappPhone={dataset.settings.owner_whatsapp_phone}
             onBack={() => setActiveView('dashboard')}
             onChangeBillingMonth={setBillingMonth}
-            onOpenAddExpenses={() => setActiveView('add-expense')}
+            onOpenAddExpenses={() => {
+              if (!isReadOnly) setActiveView('add-expense');
+            }}
             onUpdateExpense={handleUpdateExpense}
             onDeleteExpense={handleDeleteExpense}
+            isReadOnly={isReadOnly}
+            senderSignature={senderSignature}
           />
         )}
 
@@ -1719,6 +1821,8 @@ export default function App() {
             onBack={() => setActiveView('expenses')}
             onChangeBillingMonth={setBillingMonth}
             onSaveExpensesBatch={handleAddExpensesBatch}
+            isReadOnly={isReadOnly}
+            senderSignature={senderSignature}
           />
         )}
 
@@ -1733,6 +1837,8 @@ export default function App() {
             selectedPropertyId={selectedPropertyId}
             onChangeSelectedPropertyId={setSelectedPropertyId}
             onBack={() => setActiveView('dashboard')}
+            isReadOnly={isReadOnly}
+            senderSignature={senderSignature}
           />
         )}
 
@@ -1747,12 +1853,15 @@ export default function App() {
             isTestingConnection={isTestingConnection}
             isPulling={isPulling}
             isPushingAll={isPushingAll}
+            isReadOnly={isReadOnly}
             onBack={() => setActiveView('dashboard')}
             onChangeAutoLockTimer={handleChangeAutoLockTimer}
             onTestConnection={() => void handleTestConnectionAndSync()}
             onPullFromSheets={() => void handlePullFromSheets()}
             onPushAllToSheets={() => void handlePushAllToSheets()}
-            onOpenSettings={() => setShowSettingsModal(true)}
+            onOpenSettings={() => {
+              if (!isReadOnly) setShowSettingsModal(true);
+            }}
             onOpenInstallModal={() => setShowInstallModal(true)}
             onLogout={() => lockApp('App locked.')}
           />
@@ -1826,26 +1935,28 @@ export default function App() {
         </div>
       </nav>
 
-      <SettingsModal
-        isOpen={showSettingsModal}
-        session={session}
-        settings={dataset.settings}
-        secretConfigured={secretConfigured}
-        diagnostics={syncDiagnostics}
-        isTestingConnection={isTestingConnection}
-        isPulling={isPulling}
-        isPushingAll={isPushingAll}
-        pullFeedback={pullFeedback}
-        onClose={() => setShowSettingsModal(false)}
-        onSaveSettings={handleSaveSettings}
-        onTestConnectionAndSync={() => void handleTestConnectionAndSync()}
-        onPullFromSheets={() => void handlePullFromSheets()}
-        onPushAllToSheets={() => void handlePushAllToSheets()}
-        onResetBaseline={handleResetBaseline}
-      />
+      {!isReadOnly && (
+        <SettingsModal
+          isOpen={showSettingsModal}
+          session={session}
+          settings={dataset.settings}
+          secretConfigured={secretConfigured}
+          diagnostics={syncDiagnostics}
+          isTestingConnection={isTestingConnection}
+          isPulling={isPulling}
+          isPushingAll={isPushingAll}
+          pullFeedback={pullFeedback}
+          onClose={() => setShowSettingsModal(false)}
+          onSaveSettings={handleSaveSettings}
+          onTestConnectionAndSync={() => void handleTestConnectionAndSync()}
+          onPullFromSheets={() => void handlePullFromSheets()}
+          onPushAllToSheets={() => void handlePushAllToSheets()}
+          onResetBaseline={handleResetBaseline}
+        />
+      )}
 
       {/* Explicit Confirmation Modal Before Seeding an Empty Google Sheet */}
-      {showSeedEmptySheetModal && (
+      {showSeedEmptySheetModal && !isReadOnly && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-[#0f172a]/55 backdrop-blur-xs p-3 print:hidden"
           role="dialog"
@@ -1862,12 +1973,7 @@ export default function App() {
                   Initialize Google Sheet with Local Estate Data?
                 </h3>
                 <p className="text-xs text-gray-600 mt-1 leading-relaxed break-words">
-                  All 6 tabs (<span className="font-mono">Properties</span>,{' '}
-                  <span className="font-mono">Units</span>,{' '}
-                  <span className="font-mono">Tenants</span>,{' '}
-                  <span className="font-mono">BuildingMaintenance</span>,{' '}
-                  <span className="font-mono">UtilityReadings</span>,{' '}
-                  <span className="font-mono">Invoices</span>) are ready in Google Sheet{' '}
+                  All {REQUIRED_SHEET_TABS.length} tabs ({REQUIRED_SHEET_TABS.join(', ')}) are ready in Google Sheet{' '}
                   <span className="font-mono font-semibold break-all">{SPREADSHEET_ID}</span> and
                   currently have 0 data rows. Would you like to write your current local
                   estate records into the spreadsheet now?

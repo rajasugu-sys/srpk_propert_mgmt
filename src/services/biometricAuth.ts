@@ -1,9 +1,6 @@
-import { UserRole } from '../types/estate';
-
 const WEBAUTHN_STORAGE_KEY = 'srpk_webauthn_credentials_v1';
 
 export interface StoredBiometricCredential {
-  role: UserRole;
   username: string;
   credentialId: string;
   enrolledAt: string;
@@ -62,9 +59,7 @@ export function getEnrolledBiometrics(): StoredBiometricCredential[] {
   try {
     const raw = localStorage.getItem(WEBAUTHN_STORAGE_KEY);
     if (!raw) return [];
-    const parsed = JSON.parse(raw) as Array<
-      Partial<StoredBiometricCredential> & { role?: string }
-    >;
+    const parsed = JSON.parse(raw) as Array<Partial<StoredBiometricCredential>>;
     if (!Array.isArray(parsed)) return [];
     return parsed
       .filter(
@@ -75,7 +70,6 @@ export function getEnrolledBiometrics(): StoredBiometricCredential[] {
           item.credentialId.length > 0
       )
       .map((item) => ({
-        role: 'Owner' as const,
         username: item.username!,
         credentialId: item.credentialId!,
         enrolledAt: item.enrolledAt || new Date().toISOString(),
@@ -85,8 +79,13 @@ export function getEnrolledBiometrics(): StoredBiometricCredential[] {
   }
 }
 
+export function hasAnyBiometricEnrolled(): boolean {
+  return getEnrolledBiometrics().length > 0;
+}
+
 export function isBiometricEnrolledForUser(username: string): boolean {
   const target = username.trim().toLowerCase();
+  if (!target) return false;
   return getEnrolledBiometrics().some(
     (c) => c.username.trim().toLowerCase() === target
   );
@@ -108,7 +107,7 @@ export function removeBiometricForUser(username: string): void {
 function mapWebAuthnError(err: unknown): string {
   if (err instanceof DOMException) {
     if (err.name === 'NotAllowedError') {
-      return 'Biometric verification was cancelled or timed out. Try again or sign in with your PIN.';
+      return 'Biometric verification was cancelled or timed out. Try again or sign in with your password.';
     }
     if (err.name === 'SecurityError') {
       return 'Biometrics require a secure top-level HTTPS/localhost window (blocked inside restricted preview frames).';
@@ -123,7 +122,8 @@ function mapWebAuthnError(err: unknown): string {
 }
 
 export async function registerPlatformBiometric(
-  username: string
+  username: string,
+  displayName?: string
 ): Promise<
   | { ok: true; credential: StoredBiometricCredential }
   | { ok: false; error: string }
@@ -132,13 +132,14 @@ export async function registerPlatformBiometric(
   if (!supported) {
     return {
       ok: false,
-      error: 'Face ID / Fingerprint hardware authenticator is unavailable on this browser.',
+      error:
+        'Face ID / Fingerprint hardware authenticator is unavailable on this browser.',
     };
   }
 
   try {
     const cleanUser = username.trim();
-    const userId = new TextEncoder().encode(`srpk-owner-${cleanUser.toLowerCase()}`);
+    const userId = new TextEncoder().encode(`srkp-user-${cleanUser.toLowerCase()}`);
     const credential = (await navigator.credentials.create({
       publicKey: {
         challenge: randomChallenge(32),
@@ -149,7 +150,7 @@ export async function registerPlatformBiometric(
         user: {
           id: userId,
           name: cleanUser,
-          displayName: `Owner (${cleanUser})`,
+          displayName: displayName?.trim() || cleanUser,
         },
         pubKeyCredParams: [
           { alg: -7, type: 'public-key' },
@@ -171,7 +172,6 @@ export async function registerPlatformBiometric(
 
     const credentialId = bytesToBase64Url(new Uint8Array(credential.rawId));
     const entry: StoredBiometricCredential = {
-      role: 'Owner',
       username: cleanUser,
       credentialId,
       enrolledAt: new Date().toISOString(),
@@ -193,10 +193,7 @@ export async function registerPlatformBiometric(
 
 export async function authenticateWithPlatformBiometric(
   targetUsername?: string
-): Promise<
-  | { ok: true; role: UserRole; username: string }
-  | { ok: false; error: string }
-> {
+): Promise<{ ok: true; username: string } | { ok: false; error: string }> {
   const enrolled = getEnrolledBiometrics();
   const candidates = targetUsername
     ? enrolled.filter(
@@ -208,7 +205,8 @@ export async function authenticateWithPlatformBiometric(
   if (targets.length === 0) {
     return {
       ok: false,
-      error: 'No biometric credential is enrolled on this device yet. Sign in with PIN first.',
+      error:
+        'No biometric passkey is enrolled on this device yet. Sign in with your password and enable Biometrics in Profile.',
     };
   }
 
@@ -238,7 +236,6 @@ export async function authenticateWithPlatformBiometric(
 
     return {
       ok: true,
-      role: 'Owner',
       username: matched.username,
     };
   } catch (err) {

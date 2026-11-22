@@ -535,6 +535,10 @@ async function startServer() {
     }
   });
 
+  app.get('/healthz', (_req: Request, res: Response) => {
+    res.status(200).json({ ok: true });
+  });
+
   // 4. Mount Vite in development or serve built static files in production
   if (process.env.NODE_ENV !== 'production') {
     const { createServer: createViteServer } = await import('vite');
@@ -578,8 +582,33 @@ async function startServer() {
     app.use(vite.middlewares);
   } else {
     const distPath = path.join(__dirname, 'dist');
-    app.use(express.static(distPath));
-    app.get('*', (_req: Request, res: Response) => {
+    app.use(
+      express.static(distPath, {
+        setHeaders(res, filePath) {
+          const base = path.basename(filePath);
+          if (
+            base === 'index.html' ||
+            base === 'sw.js' ||
+            base === 'manifest.webmanifest' ||
+            base.startsWith('workbox-')
+          ) {
+            res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+          } else if (filePath.includes(`${path.sep}assets${path.sep}`)) {
+            res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+          }
+        },
+      })
+    );
+    app.get('*', (req: Request, res: Response) => {
+      if (
+        req.path.startsWith('/api/') ||
+        req.path.startsWith('/assets/') ||
+        Boolean(path.extname(req.path))
+      ) {
+        res.status(404).send('Not found');
+        return;
+      }
+      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
       res.sendFile(path.join(distPath, 'index.html'));
     });
   }

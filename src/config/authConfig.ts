@@ -13,19 +13,19 @@ import {
  * Or update directly from Settings > Access & PIN Management.
  *
  * Initial Default Owner Accounts (change in Settings after first login):
- *   - Owner 1: username/email = "owner@srpkestate.in"   | PIN = "202601"
- *   - Owner 2: username/email = "coowner@srpkestate.in" | PIN = "202602"
+ *   - Owner 1: username/email = "rajasugu@gmail.com" (alias: "owner@srpkestate.in") | PIN = "202601"
+ *   - Owner 2 (Co-Owner / Partner): username/email = "Parthibannewid@gmail.com" (alias: "coowner@srpkestate.in") | PIN = "202602"
  */
 export const DEFAULT_ROLE_CREDENTIALS: RoleCredentialsConfig = {
   Owner1: {
-    username: (import.meta.env.VITE_OWNER_EMAIL || 'owner@srpkestate.in').trim(),
+    username: (import.meta.env.VITE_OWNER_EMAIL || 'rajasugu@gmail.com').trim(),
     pin: (import.meta.env.VITE_OWNER_PIN || '202601').trim(),
   },
   Owner2: {
     username: (
       import.meta.env.VITE_OWNER_2_EMAIL ||
       import.meta.env.VITE_PARTNER_EMAIL ||
-      'coowner@srpkestate.in'
+      'Parthibannewid@gmail.com'
     ).trim(),
     pin: (
       import.meta.env.VITE_OWNER_2_PIN ||
@@ -227,15 +227,22 @@ export function resolveEffectiveCredentials(
   const owner1Src = source?.Owner1 || source?.Owner;
   const owner2Src = source?.Owner2 || source?.Partner;
 
+  const rawOwner1 = owner1Src?.username?.trim() || '';
+  const rawOwner2 = owner2Src?.username?.trim() || '';
+
   return {
     Owner1: {
       username:
-        owner1Src?.username?.trim() || DEFAULT_ROLE_CREDENTIALS.Owner1.username,
+        !rawOwner1 || rawOwner1.toLowerCase() === 'owner@srpkestate.in'
+          ? DEFAULT_ROLE_CREDENTIALS.Owner1.username
+          : rawOwner1,
       pin: owner1Src?.pin?.trim() || DEFAULT_ROLE_CREDENTIALS.Owner1.pin,
     },
     Owner2: {
       username:
-        owner2Src?.username?.trim() || DEFAULT_ROLE_CREDENTIALS.Owner2.username,
+        !rawOwner2 || rawOwner2.toLowerCase() === 'coowner@srpkestate.in'
+          ? DEFAULT_ROLE_CREDENTIALS.Owner2.username
+          : rawOwner2,
       pin: owner2Src?.pin?.trim() || DEFAULT_ROLE_CREDENTIALS.Owner2.pin,
     },
   };
@@ -271,22 +278,32 @@ export function verifyOwnerLogin(params: {
   const candidates: Array<{
     accountLabel: 'Owner 1' | 'Owner 2';
     username: string;
+    aliases: string[];
     pin: string;
   }> = [
     {
       accountLabel: 'Owner 1',
       username: effective.Owner1.username.trim(),
+      aliases:
+        effective.Owner1.username.trim().toLowerCase() === 'rajasugu@gmail.com'
+          ? ['rajasugu@gmail.com', 'owner@srpkestate.in']
+          : [effective.Owner1.username.trim().toLowerCase()],
       pin: effective.Owner1.pin.trim(),
     },
     {
       accountLabel: 'Owner 2',
       username: effective.Owner2.username.trim(),
+      aliases:
+        effective.Owner2.username.trim().toLowerCase() === 'parthibannewid@gmail.com'
+          ? ['parthibannewid@gmail.com', 'coowner@srpkestate.in']
+          : [effective.Owner2.username.trim().toLowerCase()],
       pin: effective.Owner2.pin.trim(),
     },
   ];
 
   const matchedAccount = candidates.find(
-    (c) => c.username.toLowerCase() === enteredUser
+    (c) =>
+      c.username.toLowerCase() === enteredUser || c.aliases.includes(enteredUser)
   );
 
   if (!matchedAccount) {

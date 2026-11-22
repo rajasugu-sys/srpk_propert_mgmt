@@ -26,6 +26,10 @@ export const InstallAppModal: React.FC<{
   const [platformTab, setPlatformTab] = useState<'android' | 'ios' | 'laptop'>(
     isIOS ? 'ios' : 'android'
   );
+  const currentOrigin =
+    typeof window !== 'undefined' ? window.location.origin : SHARED_MOBILE_APP_URL;
+  const isPublishedCloudRun =
+    !currentOrigin.includes('ais-dev-') && !currentOrigin.includes('ais-pre-');
   const [urlTarget, setUrlTarget] = useState<'shared' | 'dev'>('shared');
   const [copiedUrl, setCopiedUrl] = useState(false);
 
@@ -35,7 +39,11 @@ export const InstallAppModal: React.FC<{
     typeof window !== 'undefined' && window.self !== window.top;
 
   const activeUrl =
-    urlTarget === 'shared' ? SHARED_MOBILE_APP_URL : DEV_PORTAL_URL;
+    urlTarget === 'shared'
+      ? isPublishedCloudRun
+        ? currentOrigin
+        : SHARED_MOBILE_APP_URL
+      : DEV_PORTAL_URL;
 
   const handleCopyUrl = async () => {
     try {
@@ -48,7 +56,7 @@ export const InstallAppModal: React.FC<{
   };
 
   const waShareHref = `https://wa.me/?text=${encodeURIComponent(
-    `SRPK Property Management App — Open on mobile Chrome/Safari and tap "Add to Home Screen" / "Install App":\n${SHARED_MOBILE_APP_URL}`
+    `SRPK Property Management App — Open in Chrome/Safari:\n${activeUrl}`
   )}`;
 
   return (
@@ -86,10 +94,10 @@ export const InstallAppModal: React.FC<{
           </button>
         </div>
 
-        {/* Helpful guidance when Chrome reports "App cannot be installed" */}
+        {/* Helpful guidance when Chrome reports "Could not install" */}
         <div className="rounded-xl border border-amber-200 bg-amber-50 p-3.5 text-xs text-amber-950 space-y-1.5">
           <div className="font-bold">
-            If Chrome says &ldquo;App cannot be installed&rdquo;:
+            If Android Chrome says &ldquo;Could not install&rdquo;:
           </div>
           <ul className="list-disc list-inside space-y-1 text-amber-900">
             {isInIframe && (
@@ -107,10 +115,15 @@ export const InstallAppModal: React.FC<{
               </li>
             )}
             <li>
-              <strong>Private Dev Preview URLs</strong> require your Google login cookie, which blocks Android&apos;s background WebAPK installer from downloading app icons.
+              AI Studio preview URLs (<span className="font-mono">ais-pre-...</span> /{' '}
+              <span className="font-mono">ais-dev-...</span>) redirect icon requests through a Google cookie check (<span className="font-mono">302</span>), which blocks Android&apos;s WebAPK installer.
             </li>
             <li>
-              To install on Android: open the <strong>Shared URL</strong> in a direct Chrome tab (or deploy the app via <strong>Share / Publish</strong>), or use Chrome <strong>⋮ → Add to Home screen → Create shortcut</strong>.
+              <strong>Best fix:</strong> Use your <strong>Published Cloud Run URL</strong> (from AI Studio <strong>Publish / Deploy</strong>, with unauthenticated access allowed—your Owner Login Gate still protects the app) to install cleanly as a native PWA.
+            </li>
+            <li>
+              <strong>Quick workaround on <span className="font-mono">ais-pre-...</span>:</strong> In Chrome tap{' '}
+              <strong>⋮ → Add to Home screen → Create shortcut</strong> (instead of <em>Install</em>).
             </li>
           </ul>
         </div>

@@ -338,7 +338,7 @@ export const MasterDashboard: React.FC<MasterDashboardProps> = ({
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `SRPK-Estate-Ledger-${billingMonth}.csv`;
+    link.download = `SRKP-Rental-Tool-Ledger-${billingMonth}.csv`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);

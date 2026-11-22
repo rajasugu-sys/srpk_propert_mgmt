@@ -934,7 +934,7 @@ export default function App() {
         .join(', ');
 
       try {
-        new Notification('Tenure Expiring Soon — SRPK Estate', {
+        new Notification('Tenure Expiring Soon — SRKP Rental Tool', {
           body: `${expiring.length} tenant(s) in final 4 months: ${summary}`,
         });
         localStorage.setItem(sentKey, currentMonthKey);
@@ -1323,6 +1323,51 @@ export default function App() {
     })();
   };
 
+  const handleSaveUtilityReadingsBatch = (readings: UtilityReading[]) => {
+    if (readings.length === 0) return;
+    const prevState = datasetRef.current;
+    const readingByUnitId = new Map<string, UtilityReading>();
+    readings.forEach((r) => readingByUnitId.set(r.unit_id, r));
+
+    const nextUnits = prevState.units.map((u) => {
+      const r = readingByUnitId.get(u.unit_id);
+      if (!r) return u;
+      return {
+        ...u,
+        last_water_reading_1: r.curr_reading_1,
+        last_water_reading_2: r.curr_reading_2,
+      };
+    });
+
+    const replacedKeys = new Set(
+      readings.map((r) => `${r.unit_id}::${r.billing_month}`)
+    );
+    const retainedReadings = prevState.utilityReadings.filter(
+      (r) => !replacedKeys.has(`${r.unit_id}::${r.billing_month}`)
+    );
+    const nextReadings = [...readings, ...retainedReadings];
+
+    const tempState = {
+      ...prevState,
+      units: nextUnits,
+      utilityReadings: nextReadings,
+    };
+    const { nextInvoices, updatedInvoices } = recalculateOpenInvoices(
+      tempState,
+      (inv) => replacedKeys.has(`${inv.unit_id}::${inv.billing_month}`)
+    );
+
+    setDataset({ ...tempState, invoices: nextInvoices });
+
+    void (async () => {
+      await syncTableDirect('UtilityReadings', nextReadings);
+      await syncTableDirect('Units', nextUnits);
+      if (updatedInvoices.length > 0) {
+        await syncTableDirect('Invoices', nextInvoices);
+      }
+    })();
+  };
+
   // OLTP Mutation Handlers — Invoices
   const handleCreateInvoice = (invoice: InvoiceRecord) => {
     const nextInvoices = [invoice, ...datasetRef.current.invoices];
@@ -1625,6 +1670,7 @@ export default function App() {
             onChangeSelectedPropertyId={setSelectedPropertyId}
             initialUnitId={meterUnitId}
             onSaveUtilityReading={handleSaveUtilityReading}
+            onSaveUtilityReadingsBatch={handleSaveUtilityReadingsBatch}
           />
         )}
 
@@ -1681,6 +1727,9 @@ export default function App() {
             properties={dataset.properties}
             units={dataset.units}
             tenants={dataset.tenants}
+            utilityReadings={dataset.utilityReadings}
+            invoices={dataset.invoices}
+            billingMonth={billingMonth}
             selectedPropertyId={selectedPropertyId}
             onChangeSelectedPropertyId={setSelectedPropertyId}
             onBack={() => setActiveView('dashboard')}

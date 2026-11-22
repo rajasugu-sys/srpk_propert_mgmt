@@ -143,7 +143,7 @@ export async function registerPlatformBiometric(
       publicKey: {
         challenge: randomChallenge(32),
         rp: {
-          name: 'SRPK Enterprise Estate',
+          name: 'SRKP Rental Tool',
           id: window.location.hostname,
         },
         user: {

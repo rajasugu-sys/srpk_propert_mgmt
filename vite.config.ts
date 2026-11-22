@@ -15,8 +15,8 @@ export default defineConfig(() => {
         includeAssets: ['icon.svg', 'apple-touch-icon.png', 'pwa-192x192.png', 'pwa-512x512.png', 'pwa-maskable-512x512.png'],
         manifest: {
           id: '/',
-          name: 'SRPK Enterprise Estate',
-          short_name: 'SRPK Estate',
+          name: 'SRKP Rental Tool',
+          short_name: 'SRKP Rental',
           description: 'Manage 12 residential units across Bengaluru and Chennai with utility meter capture, UPI invoicing, and Google Sheets sync.',
           theme_color: '#0f172a',
           background_color: '#f8f9ff',

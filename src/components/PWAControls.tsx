@@ -56,7 +56,7 @@ export const InstallAppModal: React.FC<{
   };
 
   const waShareHref = `https://wa.me/?text=${encodeURIComponent(
-    `SRPK Property Management App — Open in Chrome/Safari:\n${activeUrl}`
+    `SRKP Rental Management App — Open in Chrome/Safari:\n${activeUrl}`
   )}`;
 
   return (
@@ -80,7 +80,7 @@ export const InstallAppModal: React.FC<{
                 Install Mobile App & Laptop Web Portal
               </h2>
               <p className="text-xs text-slate-500">
-                Install SRPK Estate on Android, iPhone, or Laptop Desktop (PWA)
+                Install SRKP Rental Tool on Android, iPhone, or Laptop Desktop (PWA)
               </p>
             </div>
           </div>
@@ -290,7 +290,7 @@ export const InstallAppModal: React.FC<{
                   <strong>⋮ menu → Add to Home screen → Install</strong>.
                 </li>
                 <li>
-                  The <strong>SRPK Estate</strong> icon appears on your home screen and runs full-screen with offline support.
+                  The <strong>SRKP Rental Tool</strong> icon appears on your home screen and runs full-screen with offline support.
                 </li>
               </ol>
             </div>
@@ -329,7 +329,7 @@ export const InstallAppModal: React.FC<{
                 <li>
                   To pin it as a standalone desktop app: click the{' '}
                   <strong>Install (monitor + arrow)</strong> icon in Chrome/Edge&apos;s address bar, or open Chrome{' '}
-                  <strong>⋮ → Cast, save, and share → Install SRPK Enterprise Estate</strong>.
+                  <strong>⋮ → Cast, save, and share → Install SRKP Rental Tool</strong>.
                 </li>
               </ol>
             </div>

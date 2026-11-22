@@ -5,7 +5,7 @@ import {
 } from '../types/estate';
 
 /**
- * Dual-Owner Credentials for SRPK Enterprise Estate.
+ * Dual-Owner Credentials for SRKP Rental Tool.
  * Both authorized accounts authenticate with full Owner (Admin) permissions.
  * Override cleanly via Vite environment variables:
  *   VITE_OWNER_EMAIL   / VITE_OWNER_PIN

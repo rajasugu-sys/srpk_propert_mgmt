@@ -406,7 +406,7 @@ export const TenantPortalView: React.FC<TenantPortalViewProps> = ({
             <div className="min-w-0">
               <div className="flex items-center gap-2 flex-wrap">
                 <h1 className="text-base sm:text-lg font-bold text-[#0f172a] truncate">
-                  {property?.property_name || 'SRPK Estate'} · Resident Portal
+                  {property?.property_name || 'SRKP Rental Tool'} · Resident Portal
                 </h1>
                 <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 text-[11px] font-semibold text-emerald-700">
                   <ShieldCheck className="w-3 h-3" />

@@ -614,7 +614,7 @@ async function startServer() {
   }
 
   app.listen(PORT, '0.0.0.0', () => {
-    console.log(`SRPK Estate full-stack server listening on http://0.0.0.0:${PORT}`);
+    console.log(`SRKP Rental Tool full-stack server listening on http://0.0.0.0:${PORT}`);
   });
 }
 

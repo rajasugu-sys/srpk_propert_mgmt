@@ -15,7 +15,7 @@ import { buildUpiPaymentLink, isInvoiceLockedStatus } from '../utils/billingEngi
 
 export const DEFAULT_APP_SETTINGS: AppSettings = {
   merchant_upi_id: 'srpk.estate@okicici',
-  merchant_name: 'SRPK Property Management',
+  merchant_name: 'SRKP Rental Management',
   owner_whatsapp_phone: '+919845011223',
   last_synced_at: null,
   auto_lock_timer: '15m',

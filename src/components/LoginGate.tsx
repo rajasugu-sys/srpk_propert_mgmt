@@ -102,7 +102,7 @@ export const LoginGate: React.FC<LoginGateProps> = ({
             </div>
             <div>
               <h1 className="text-xl font-bold tracking-tight text-white">
-                SRPK Estate
+                SRKP Rental Tool
               </h1>
               <p className="text-xs text-emerald-50/90 mt-0.5">
                 Property, Tenant &amp; Utility Suite
@@ -273,7 +273,7 @@ export const LoginGate: React.FC<LoginGateProps> = ({
         <div className="pt-4 border-t border-gray-100 flex items-center justify-between text-[11px] text-gray-400">
           <span className="inline-flex items-center gap-1.5">
             <Building2 className="w-3.5 h-3.5 text-[#489E44]" />
-            <span>SRPK Property Management</span>
+            <span>SRKP Rental Management</span>
           </span>
           <span className="font-mono">Dual-Owner Access</span>
         </div>

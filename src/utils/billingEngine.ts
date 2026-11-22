@@ -115,7 +115,7 @@ export function formatWhatsAppInvoiceMessage(
     `Pay Owner via UPI: *${upiId}*`,
     `UPI Link: ${invoice.upi_link}`,
     ``,
-    `Thank you — SRPK Estate Management`,
+    `Thank you — SRKP Rental Management`,
   ];
 
   return lines.join('\n');
@@ -248,7 +248,7 @@ export function formatTenureReminderWhatsApp(params: {
       `Kindly confirm if you wish to renew your agreement for the next term or schedule a move-out inspection.`,
       ``,
       `Regards,`,
-      `SRPK Estate Management`,
+      `SRKP Rental Management`,
     ].join('\n');
   }
 
@@ -279,7 +279,7 @@ export function formatWhatsAppPnLReport(params: {
 
   return [
     `*Monthly Financial Summary - ${monthLabel}*`,
-    `SRPK Estate Management`,
+    `SRKP Rental Management`,
     `--------------------------------`,
     `Total Income: *${formatINR(params.totalIncome)}*`,
     ``,

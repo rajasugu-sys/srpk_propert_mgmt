@@ -67,7 +67,7 @@ class AppErrorBoundary extends React.Component<
             </div>
             <div className="space-y-1">
               <h1 className="text-base font-bold text-[#0f172a]">
-                SRPK Estate Needs a Quick Refresh
+                SRKP Rental Tool Needs a Quick Refresh
               </h1>
               <p className="text-xs text-gray-500 leading-relaxed">
                 A cached update or connection interruption prevented the screen from loading.

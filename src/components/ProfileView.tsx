@@ -1,90 +1,45 @@
 import React, { useEffect, useState } from 'react';
 import {
-  Activity,
   AlertCircle,
-  ArrowDownToLine,
-  ArrowUpToLine,
-  Check,
   CheckCircle2,
-  Clock,
-  ExternalLink,
   Eye,
   EyeOff,
-  FileSpreadsheet,
   Fingerprint,
   KeyRound,
   LogOut,
-  QrCode,
-  RefreshCw,
-  Settings,
+  Mail,
+  Phone,
   ShieldCheck,
   Trash2,
-  XCircle,
+  UserCheck,
 } from 'lucide-react';
-import {
-  AUTO_LOCK_OPTIONS,
-  changeAccountPassword,
-} from '../config/authConfig';
+import { changeAccountPassword } from '../config/authConfig';
 import {
   isBiometricEnrolledForUser,
   isPlatformBiometricSupported,
   registerPlatformBiometric,
   removeBiometricForUser,
 } from '../services/biometricAuth';
-import { SPREADSHEET_ID, SPREADSHEET_URL } from '../services/googleSheetsSync';
-import type {
-  AppSettings,
-  AuthSession,
-  AutoLockTimerMode,
-  SyncDiagnostics,
-  SyncStatus,
-} from '../types/estate';
+import type { AuthSession } from '../types/estate';
 import { MobileShellHeader } from './MobileShellHeader';
 
 interface ProfileViewProps {
   session: AuthSession;
-  settings: AppSettings;
-  autoLockTimer: AutoLockTimerMode;
-  secretConfigured: boolean;
-  syncStatus: SyncStatus;
-  diagnostics: SyncDiagnostics | null;
-  isTestingConnection: boolean;
-  isPulling: boolean;
-  isPushingAll: boolean;
-  isReadOnly?: boolean;
   onBack: () => void;
-  onChangeAutoLockTimer: (mode: AutoLockTimerMode) => void;
-  onTestConnection: () => void;
-  onPullFromSheets: () => void;
-  onPushAllToSheets: () => void;
-  onOpenSettings: () => void;
-  onOpenInstallModal: () => void;
   onLogout: () => void;
 }
 
 export const ProfileView: React.FC<ProfileViewProps> = ({
   session,
-  settings,
-  autoLockTimer,
-  secretConfigured,
-  syncStatus,
-  diagnostics,
-  isTestingConnection,
-  isPulling,
-  isPushingAll,
-  isReadOnly = false,
   onBack,
-  onChangeAutoLockTimer,
-  onTestConnection,
-  onPullFromSheets,
-  onPushAllToSheets,
-  onOpenSettings,
-  onOpenInstallModal,
   onLogout,
 }) => {
   const [biometricSupported, setBiometricSupported] = useState(false);
   const [biometricEnrolled, setBiometricEnrolled] = useState(false);
-  const [bioMsg, setBioMsg] = useState<string | null>(null);
+  const [biometricBusy, setBiometricBusy] = useState(false);
+  const [bioMsg, setBioMsg] = useState<{ type: 'ok' | 'err'; text: string } | null>(
+    null
+  );
 
   const [currentPwd, setCurrentPwd] = useState('');
   const [newPwd, setNewPwd] = useState('');
@@ -101,25 +56,40 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
     void isPlatformBiometricSupported().then(setBiometricSupported);
   }, [session.userId]);
 
-  const isConnected = Boolean(
-    diagnostics?.connected || (secretConfigured && settings.last_synced_at)
-  );
-
   const handleEnrollBiometric = async () => {
     setBioMsg(null);
+    setBiometricBusy(true);
     const res = await registerPlatformBiometric(session.userId, session.fullName);
+    setBiometricBusy(false);
     if (res.ok) {
       setBiometricEnrolled(true);
-      setBioMsg('Face ID / Fingerprint quick login enabled on this device.');
+      setBioMsg({
+        type: 'ok',
+        text: 'Face ID / Fingerprint quick login enabled on this device.',
+      });
     } else {
-      setBioMsg('error' in res ? res.error : 'Biometric enrollment failed.');
+      setBioMsg({
+        type: 'err',
+        text: 'error' in res ? res.error : 'Biometric enrollment failed.',
+      });
     }
   };
 
   const handleRemoveBiometric = () => {
     removeBiometricForUser(session.userId);
     setBiometricEnrolled(false);
-    setBioMsg('Removed biometric quick login on this device.');
+    setBioMsg({
+      type: 'ok',
+      text: 'Biometric quick login disabled on this device.',
+    });
+  };
+
+  const handleToggleBiometric = () => {
+    if (biometricEnrolled) {
+      handleRemoveBiometric();
+    } else {
+      void handleEnrollBiometric();
+    }
   };
 
   const handleChangePassword = async (e: React.FormEvent) => {
@@ -157,17 +127,15 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
     setPwdFeedback({ type: 'ok', text: res.message });
   };
 
-  const displayInitials = (session.fullName || session.userId || 'US')
-    .trim()
-    .slice(0, 2)
-    .toUpperCase();
+  const displayName = session.fullName || session.username || session.userId;
+  const displayInitials = displayName.trim().slice(0, 2).toUpperCase();
   const roleLabel = session.accessType === 'admin' ? 'Admin' : 'Viewer';
 
   return (
     <div className="min-h-full">
       <MobileShellHeader
         title="My Profile"
-        subtitle="Account, Google Sheets sync & device security"
+        subtitle="Personal account & security"
         onBack={onBack}
         rightSlot={
           <span className="inline-flex items-center gap-1 rounded-full bg-[#FACC15] px-2.5 py-1 text-[11px] font-bold text-[#0f172a]">
@@ -176,127 +144,75 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
         }
       >
         <div className="rounded-2xl bg-white/15 backdrop-blur-xs px-3.5 py-3 flex items-center gap-3">
-          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-white text-[#3E8E41] font-bold text-sm">
+          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-white text-[#3E8E41] font-extrabold text-sm shadow-xs">
             {displayInitials}
           </div>
           <div className="min-w-0 flex-1">
-            <div className="text-sm font-bold text-white truncate">
-              {session.fullName || session.username}
-            </div>
-            <div className="text-xs text-emerald-50/90 truncate">
-              {roleLabel} · {session.email || session.mobileNumber || session.userId}
+            <div className="text-sm font-bold text-white truncate">{displayName}</div>
+            <div className="text-xs text-emerald-50/90 truncate font-mono">
+              @{session.userId}
             </div>
           </div>
+          <span className="inline-flex items-center gap-1 rounded-full bg-white/20 px-2.5 py-1 text-[10px] font-bold text-white shrink-0">
+            <ShieldCheck className="w-3 h-3" />
+            <span>{roleLabel}</span>
+          </span>
         </div>
       </MobileShellHeader>
 
       <div className="bg-white rounded-t-[28px] -mt-5 pt-5 px-4 pb-24 min-h-[calc(100vh-170px)] space-y-4">
-        {/* Google Sheets Sync Quick Card */}
+        {/* Personal Account Information Card */}
         <section className="rounded-2xl border border-gray-100 bg-white p-4 shadow-2xs space-y-3">
           <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center gap-2 min-w-0">
-              <FileSpreadsheet className="w-4 h-4 text-[#489E44] shrink-0" />
-              <span className="text-xs font-bold text-[#0f172a] truncate">
-                Google Sheets Sync
+            <div className="flex items-center gap-2">
+              <UserCheck className="w-4 h-4 text-[#489E44]" />
+              <span className="text-xs font-bold text-[#0f172a]">
+                Account Information
               </span>
             </div>
             <span
-              className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-semibold ${
-                syncStatus === 'Syncing...'
-                  ? 'bg-amber-50 text-amber-700'
-                  : isConnected
-                    ? 'bg-emerald-50 text-[#3E8E41]'
-                    : 'bg-gray-100 text-gray-600'
+              className={`rounded-full px-2.5 py-0.5 text-[10px] font-bold ${
+                session.accessType === 'admin'
+                  ? 'bg-emerald-50 text-[#3E8E41]'
+                  : 'bg-amber-50 text-amber-800'
               }`}
             >
-              {syncStatus === 'Syncing...' ? (
-                <RefreshCw className="w-3 h-3 animate-spin" />
-              ) : isConnected ? (
-                <CheckCircle2 className="w-3 h-3 text-[#489E44]" />
-              ) : (
-                <XCircle className="w-3 h-3 text-gray-500" />
-              )}
-              <span>
-                {syncStatus === 'Syncing...'
-                  ? 'Syncing'
-                  : isConnected
-                    ? 'Connected'
-                    : 'Not Tested'}
-              </span>
+              {roleLabel} Access
             </span>
           </div>
 
-          <div className="text-[11px] font-mono text-gray-500 break-all">
-            Sheet ID: {SPREADSHEET_ID}
-          </div>
-
-          <div className="text-[11px] text-gray-500">
-            Last Synced:{' '}
-            <strong className="text-[#0f172a]">
-              {settings.last_synced_at
-                ? new Date(settings.last_synced_at).toLocaleString()
-                : 'Never'}
-            </strong>
-          </div>
-
-          {isReadOnly ? (
-            <div className="space-y-2 pt-1">
-              <button
-                type="button"
-                onClick={onPullFromSheets}
-                disabled={isPulling}
-                className="w-full inline-flex items-center justify-center gap-1.5 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2.5 text-xs font-semibold text-[#3E8E41] hover:bg-emerald-100 disabled:opacity-50 cursor-pointer min-h-[42px]"
-              >
-                <ArrowDownToLine className="w-3.5 h-3.5 shrink-0" />
-                <span>{isPulling ? 'Pulling Latest Data...' : 'Pull Latest Data from Google Sheet'}</span>
-              </button>
-              <div className="text-[11px] text-gray-500 text-center">
-                Viewer access: read-only mode (editing &amp; pushing disabled).
-              </div>
+          <div className="divide-y divide-gray-100 text-xs">
+            <div className="py-2 flex items-center justify-between gap-3">
+              <span className="text-gray-500">Full Name</span>
+              <span className="font-semibold text-[#0f172a] text-right truncate">
+                {displayName}
+              </span>
             </div>
-          ) : (
-            <div className="grid grid-cols-3 gap-2 pt-1">
-              <button
-                type="button"
-                onClick={onTestConnection}
-                disabled={isTestingConnection}
-                className="inline-flex items-center justify-center gap-1 rounded-xl bg-[#0f172a] px-2.5 py-2.5 text-[11px] font-semibold text-white hover:bg-slate-800 disabled:opacity-50 cursor-pointer"
-              >
-                <Activity className="w-3.5 h-3.5 text-[#489E44] shrink-0" />
-                <span>{isTestingConnection ? 'Testing' : 'Test'}</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={onPullFromSheets}
-                disabled={isPulling}
-                className="inline-flex items-center justify-center gap-1 rounded-xl border border-emerald-200 bg-emerald-50 px-2.5 py-2.5 text-[11px] font-semibold text-[#3E8E41] hover:bg-emerald-100 disabled:opacity-50 cursor-pointer"
-              >
-                <ArrowDownToLine className="w-3.5 h-3.5 shrink-0" />
-                <span>{isPulling ? 'Pulling' : 'Pull'}</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={onPushAllToSheets}
-                disabled={isPushingAll}
-                className="inline-flex items-center justify-center gap-1 rounded-xl bg-[#489E44] px-2.5 py-2.5 text-[11px] font-semibold text-white hover:bg-[#3E8E41] disabled:opacity-50 cursor-pointer"
-              >
-                <ArrowUpToLine className="w-3.5 h-3.5 shrink-0" />
-                <span>{isPushingAll ? 'Pushing' : 'Push All'}</span>
-              </button>
+            <div className="py-2 flex items-center justify-between gap-3">
+              <span className="text-gray-500">User ID</span>
+              <span className="font-mono font-semibold text-[#0f172a] text-right truncate">
+                {session.userId}
+              </span>
             </div>
-          )}
-
-          <a
-            href={SPREADSHEET_URL}
-            target="_blank"
-            rel="noreferrer"
-            className="w-full inline-flex items-center justify-center gap-1.5 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-xs font-semibold text-[#0f172a] hover:bg-gray-100"
-          >
-            <span>Open Live Google Sheet</span>
-            <ExternalLink className="w-3.5 h-3.5 text-[#489E44]" />
-          </a>
+            <div className="py-2 flex items-center justify-between gap-3">
+              <span className="inline-flex items-center gap-1.5 text-gray-500">
+                <Mail className="w-3.5 h-3.5 text-gray-400" />
+                <span>Email</span>
+              </span>
+              <span className="font-medium text-[#0f172a] text-right truncate">
+                {session.email || 'Not set'}
+              </span>
+            </div>
+            <div className="py-2 flex items-center justify-between gap-3">
+              <span className="inline-flex items-center gap-1.5 text-gray-500">
+                <Phone className="w-3.5 h-3.5 text-gray-400" />
+                <span>Mobile Number</span>
+              </span>
+              <span className="font-mono font-semibold text-[#0f172a] text-right truncate">
+                {session.mobileNumber || 'Not set'}
+              </span>
+            </div>
+          </div>
         </section>
 
         {/* Change Account Password Card */}
@@ -312,6 +228,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
               type="button"
               onClick={() => setShowPwd((v) => !v)}
               className="text-gray-400 hover:text-gray-700 cursor-pointer"
+              aria-label={showPwd ? 'Hide password inputs' : 'Show password inputs'}
             >
               {showPwd ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
             </button>
@@ -371,35 +288,55 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
           </form>
         </section>
 
-        {/* Biometric Security Card */}
+        {/* Biometric Quick Login Card (Face ID / Fingerprint) */}
         <section className="rounded-2xl border border-gray-100 bg-white p-4 shadow-2xs space-y-3">
           <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center gap-2">
-              <Fingerprint className="w-4 h-4 text-[#489E44]" />
-              <span className="text-xs font-bold text-[#0f172a]">
-                Face ID / Fingerprint Login
-              </span>
+            <div className="flex items-center gap-2 min-w-0">
+              <Fingerprint className="w-4 h-4 text-[#489E44] shrink-0" />
+              <div className="min-w-0">
+                <div className="text-xs font-bold text-[#0f172a]">
+                  Biometric Quick Login
+                </div>
+                <div className="text-[11px] text-gray-500">
+                  Face ID / Fingerprint on this device
+                </div>
+              </div>
             </div>
-            <span
-              className={`rounded-md px-2 py-0.5 text-[11px] font-semibold ${
-                biometricEnrolled
-                  ? 'bg-emerald-50 text-[#3E8E41]'
-                  : 'bg-gray-100 text-gray-600'
-              }`}
-            >
-              {biometricEnrolled ? 'Enabled' : 'Not Enrolled'}
-            </span>
-          </div>
 
-          <div className="flex flex-wrap gap-2">
             <button
               type="button"
-              disabled={!biometricSupported}
+              role="switch"
+              aria-checked={biometricEnrolled}
+              aria-label="Toggle Biometric Quick Login"
+              disabled={(!biometricSupported && !biometricEnrolled) || biometricBusy}
+              onClick={handleToggleBiometric}
+              className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors cursor-pointer disabled:opacity-50 ${
+                biometricEnrolled ? 'bg-[#489E44]' : 'bg-gray-200'
+              }`}
+            >
+              <span
+                className={`inline-block h-4.5 w-4.5 transform rounded-full bg-white shadow-xs transition-transform ${
+                  biometricEnrolled ? 'translate-x-5.5' : 'translate-x-1'
+                }`}
+              />
+            </button>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              disabled={!biometricSupported || biometricBusy}
               onClick={() => void handleEnrollBiometric()}
               className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-xl bg-[#489E44] px-3 py-2.5 text-xs font-semibold text-white hover:bg-[#3E8E41] disabled:opacity-50 cursor-pointer"
             >
               <Fingerprint className="w-3.5 h-3.5" />
-              <span>{biometricEnrolled ? 'Re-register' : 'Enable Biometric'}</span>
+              <span>
+                {biometricBusy
+                  ? 'Enrolling...'
+                  : biometricEnrolled
+                    ? 'Re-register Biometric'
+                    : 'Enroll Face ID / Fingerprint'}
+              </span>
             </button>
             {biometricEnrolled && (
               <button
@@ -408,7 +345,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                 className="inline-flex items-center justify-center gap-1 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2.5 text-xs font-semibold text-rose-700 hover:bg-rose-100 cursor-pointer"
               >
                 <Trash2 className="w-3.5 h-3.5" />
-                <span>Remove</span>
+                <span>Disable</span>
               </button>
             )}
           </div>
@@ -418,120 +355,15 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
               Open in HTTPS / mobile PWA to enroll Face ID or Fingerprint.
             </p>
           )}
-          {bioMsg && <p className="text-[11px] font-semibold text-[#3E8E41]">{bioMsg}</p>}
-        </section>
-
-        {/* Auto-Lock Timer Card */}
-        <section className="rounded-2xl border border-gray-100 bg-white p-4 shadow-2xs space-y-3">
-          <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center gap-2">
-              <Clock className="w-4 h-4 text-[#489E44]" />
-              <span className="text-xs font-bold text-[#0f172a]">
-                Auto-Lock Timer
-              </span>
-            </div>
-            <span className="rounded-md bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-[#3E8E41]">
-              {autoLockTimer === 'immediate'
-                ? 'Immediate'
-                : autoLockTimer === '5m'
-                  ? '5 min'
-                  : autoLockTimer === '30m'
-                    ? '30 min'
-                    : '15 min'}
-            </span>
-          </div>
-
-          <p className="text-[11px] text-gray-500 leading-relaxed">
-            Automatically locks the app when idle or after leaving the app in the background.
-          </p>
-
-          <div className="space-y-1.5" role="radiogroup" aria-label="Auto-Lock Timer">
-            {AUTO_LOCK_OPTIONS.map((option) => {
-              const selected = autoLockTimer === option.value;
-              return (
-                <button
-                  key={option.value}
-                  type="button"
-                  role="radio"
-                  aria-checked={selected}
-                  onClick={() => onChangeAutoLockTimer(option.value)}
-                  className={`w-full flex items-center justify-between gap-2.5 rounded-xl border px-3 py-2.5 text-left transition-colors cursor-pointer ${
-                    selected
-                      ? 'border-[#489E44] bg-emerald-50/70'
-                      : 'border-gray-200 bg-white hover:bg-gray-50'
-                  }`}
-                >
-                  <div className="min-w-0">
-                    <div
-                      className={`text-xs font-semibold ${
-                        selected ? 'text-[#3E8E41]' : 'text-[#0f172a]'
-                      }`}
-                    >
-                      {option.label}
-                    </div>
-                    <div className="text-[11px] text-gray-500 mt-0.5">
-                      {option.description}
-                    </div>
-                  </div>
-                  <div
-                    className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full border ${
-                      selected
-                        ? 'border-[#489E44] bg-[#489E44] text-white'
-                        : 'border-gray-300 bg-white'
-                    }`}
-                  >
-                    {selected && <Check className="w-3 h-3" />}
-                  </div>
-                </button>
-              );
-            })}
-          </div>
-        </section>
-
-        {/* Admin Settings & Install Actions */}
-        <section className="rounded-2xl border border-gray-100 bg-white divide-y divide-gray-100 shadow-2xs overflow-hidden">
-          {!isReadOnly && (
-            <button
-              type="button"
-              onClick={onOpenSettings}
-              className="w-full px-4 py-3.5 flex items-center justify-between text-left hover:bg-gray-50 cursor-pointer"
+          {bioMsg && (
+            <p
+              className={`text-[11px] font-semibold ${
+                bioMsg.type === 'ok' ? 'text-[#3E8E41]' : 'text-rose-700'
+              }`}
             >
-              <div className="flex items-center gap-3">
-                <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-50 text-[#489E44]">
-                  <Settings className="w-4 h-4" />
-                </div>
-                <div>
-                  <div className="text-xs font-bold text-[#0f172a]">
-                    UPI, Master Admin PIN &amp; Sync Settings
-                  </div>
-                  <div className="text-[11px] text-gray-500">
-                    {settings.merchant_upi_id}
-                  </div>
-                </div>
-              </div>
-              <ShieldCheck className="w-4 h-4 text-gray-400" />
-            </button>
+              {bioMsg.text}
+            </p>
           )}
-
-          <button
-            type="button"
-            onClick={onOpenInstallModal}
-            className="w-full px-4 py-3.5 flex items-center justify-between text-left hover:bg-gray-50 cursor-pointer"
-          >
-            <div className="flex items-center gap-3">
-              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-50 text-[#489E44]">
-                <QrCode className="w-4 h-4" />
-              </div>
-              <div>
-                <div className="text-xs font-bold text-[#0f172a]">
-                  Install Mobile App &amp; Share QR
-                </div>
-                <div className="text-[11px] text-gray-500">
-                  Android, iOS Safari &amp; Desktop PWA
-                </div>
-              </div>
-            </div>
-          </button>
         </section>
 
         <button

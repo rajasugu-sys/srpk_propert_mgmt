@@ -14,6 +14,7 @@ import {
   MessageSquare,
   Plus,
   Receipt,
+  RefreshCw,
   Settings,
   User,
   Users,
@@ -66,6 +67,8 @@ interface MasterDashboardProps {
   onOpenAnnouncements: () => void;
   onOpenSettings: () => void;
   onOpenProfile: () => void;
+  onPullFromSheets?: () => void;
+  isPulling?: boolean;
   onQuickLock: () => void;
   onOpenOnboardUnit: (unitId?: string) => void;
   onOpenMoveOutUnit: (unitId: string) => void;
@@ -123,6 +126,8 @@ export const MasterDashboard: React.FC<MasterDashboardProps> = ({
   onOpenAnnouncements,
   onOpenSettings,
   onOpenProfile,
+  onPullFromSheets,
+  isPulling = false,
   onQuickLock,
   onOpenOnboardUnit,
   onOpenMoveOutUnit,
@@ -459,7 +464,7 @@ export const MasterDashboard: React.FC<MasterDashboardProps> = ({
               <Lock className="w-4 h-4" />
             </button>
 
-            {!isReadOnly && (
+            {!isReadOnly ? (
               <button
                 type="button"
                 onClick={onOpenSettings}
@@ -469,6 +474,19 @@ export const MasterDashboard: React.FC<MasterDashboardProps> = ({
               >
                 <Settings className="w-4 h-4" />
               </button>
+            ) : (
+              onPullFromSheets && (
+                <button
+                  type="button"
+                  onClick={onPullFromSheets}
+                  disabled={isPulling}
+                  className="flex h-8 w-8 sm:h-9 sm:w-9 items-center justify-center rounded-full bg-white/15 text-white hover:bg-white/25 disabled:opacity-60 transition-colors cursor-pointer"
+                  title="Pull / Refresh Data from Google Sheet"
+                  aria-label="Pull / Refresh Data"
+                >
+                  <RefreshCw className={`w-4 h-4 ${isPulling ? 'animate-spin' : ''}`} />
+                </button>
+              )
             )}
 
             <button

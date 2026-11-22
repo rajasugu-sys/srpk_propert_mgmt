@@ -61,7 +61,7 @@ export const InstallAppModal: React.FC<{
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-[#0f172a]/60 backdrop-blur-xs p-2 sm:p-4 print:hidden"
+      className="fixed inset-0 z-[60] flex items-center justify-center bg-[#0f172a]/60 backdrop-blur-xs p-2 sm:p-4 print:hidden"
       role="dialog"
       aria-modal="true"
       aria-labelledby="install-modal-title"

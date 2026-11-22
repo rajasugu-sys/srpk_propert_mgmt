@@ -1680,6 +1680,8 @@ export default function App() {
               if (!isReadOnly) setShowSettingsModal(true);
             }}
             onOpenProfile={() => setActiveView('profile')}
+            onPullFromSheets={() => void handlePullFromSheets()}
+            isPulling={isPulling}
             onQuickLock={() => lockApp('App locked.')}
             onOpenOnboardUnit={(unitId) => {
               if (isReadOnly) return;
@@ -1845,24 +1847,7 @@ export default function App() {
         {activeView === 'profile' && (
           <ProfileView
             session={session}
-            settings={dataset.settings}
-            autoLockTimer={autoLockTimer}
-            secretConfigured={secretConfigured}
-            syncStatus={syncStatus}
-            diagnostics={syncDiagnostics}
-            isTestingConnection={isTestingConnection}
-            isPulling={isPulling}
-            isPushingAll={isPushingAll}
-            isReadOnly={isReadOnly}
             onBack={() => setActiveView('dashboard')}
-            onChangeAutoLockTimer={handleChangeAutoLockTimer}
-            onTestConnection={() => void handleTestConnectionAndSync()}
-            onPullFromSheets={() => void handlePullFromSheets()}
-            onPushAllToSheets={() => void handlePushAllToSheets()}
-            onOpenSettings={() => {
-              if (!isReadOnly) setShowSettingsModal(true);
-            }}
-            onOpenInstallModal={() => setShowInstallModal(true)}
             onLogout={() => lockApp('App locked.')}
           />
         )}
@@ -1940,7 +1925,9 @@ export default function App() {
           isOpen={showSettingsModal}
           session={session}
           settings={dataset.settings}
+          autoLockTimer={autoLockTimer}
           secretConfigured={secretConfigured}
+          syncStatus={syncStatus}
           diagnostics={syncDiagnostics}
           isTestingConnection={isTestingConnection}
           isPulling={isPulling}
@@ -1948,9 +1935,11 @@ export default function App() {
           pullFeedback={pullFeedback}
           onClose={() => setShowSettingsModal(false)}
           onSaveSettings={handleSaveSettings}
+          onChangeAutoLockTimer={handleChangeAutoLockTimer}
           onTestConnectionAndSync={() => void handleTestConnectionAndSync()}
           onPullFromSheets={() => void handlePullFromSheets()}
           onPushAllToSheets={() => void handlePushAllToSheets()}
+          onOpenInstallModal={() => setShowInstallModal(true)}
           onResetBaseline={handleResetBaseline}
         />
       )}

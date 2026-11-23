@@ -56,6 +56,12 @@ import {
   testConnectionAndSyncNow,
 } from './services/googleSheetsSync';
 import {
+  enablePhonePushNotifications,
+  fetchPushSubscriptionStatus,
+  getExistingPushSubscription,
+  sendTestPhonePush,
+} from './services/webPushClient';
+import {
   AppSettings,
   AppView,
   AuthSession,
@@ -664,7 +670,7 @@ export default function App() {
   const [pullFeedback, setPullFeedback] = useState<string | null>(null);
   const [showSeedEmptySheetModal, setShowSeedEmptySheetModal] = useState(false);
 
-  // Settings, Install Hub, Browser Notifications
+  // Settings, Install Hub, Browser/Web Push Notifications
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [showInstallModal, setShowInstallModal] = useState(false);
   const [notificationPermission, setNotificationPermission] = useState<
@@ -674,6 +680,13 @@ export default function App() {
       ? Notification.permission
       : 'unsupported'
   );
+  const [pushBusy, setPushBusy] = useState(false);
+  const [pushSubscribed, setPushSubscribed] = useState(false);
+  const [pushDeviceCount, setPushDeviceCount] = useState(0);
+  const [pushFeedback, setPushFeedback] = useState<{
+    ok: boolean;
+    message: string;
+  } | null>(null);
 
   const hydratedFromServer = useRef(false);
   const skipNextServerPut = useRef(false);
@@ -801,6 +814,40 @@ export default function App() {
       // ignore storage cleanup errors
     }
     void isPlatformBiometricSupported().then(setBiometricSupported);
+    void getExistingPushSubscription().then((sub) => {
+      if (sub) setPushSubscribed(true);
+    });
+
+    const params = new URLSearchParams(window.location.search);
+    const viewParam = params.get('view');
+    if (viewParam === 'invoices' || viewParam === 'tenants') {
+      setActiveView(viewParam);
+      window.history.replaceState({}, '', window.location.pathname);
+    }
+
+    const handleSwMessage = (event: MessageEvent) => {
+      const data = event.data as { type?: string; url?: string } | undefined;
+      if (data?.type === 'SRKP_PUSH_NAVIGATE' && data.url) {
+        try {
+          const parsed = new URL(data.url, window.location.origin);
+          const v = parsed.searchParams.get('view');
+          if (v === 'invoices' || v === 'tenants') {
+            setActiveView(v);
+          }
+        } catch {
+          // ignore malformed url
+        }
+      }
+    };
+
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.addEventListener('message', handleSwMessage);
+    }
+    return () => {
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.removeEventListener('message', handleSwMessage);
+      }
+    };
   }, []);
 
   useEffect(() => {
@@ -811,6 +858,12 @@ export default function App() {
         const status = await fetchSheetsConfigStatus();
         setSecretConfigured(status.secretConfigured);
         await handlePullFromSheets({ silentOnFailureOrEmpty: true });
+      }
+      if (session.accessType === 'admin' && session.authToken) {
+        const pushStatus = await fetchPushSubscriptionStatus(session.authToken);
+        if (pushStatus.ok) {
+          setPushDeviceCount(pushStatus.subscriptionCount);
+        }
       }
     })();
   }, [session, fetchServerDataset, handlePullFromSheets]);
@@ -954,102 +1007,30 @@ export default function App() {
     });
   }, [dataset, session?.accessType, session?.authToken]);
 
-  // 4. Monthly Automated Browser Push Notification for Tenure Expiring Soon (<= 4 months)
-  const dispatchTenureBrowserNotification = useCallback(
-    (tenantsList: TenantRecord[], propertiesList: PropertyHouse[], unitsList: Unit[]) => {
-      if (typeof window === 'undefined' || !('Notification' in window)) return;
-      if (Notification.permission !== 'granted') return;
-
-      const currentMonthKey = new Date().toISOString().slice(0, 7);
-      const sentKey = 'srpk_tenure_notif_sent_month';
-      try {
-        if (localStorage.getItem(sentKey) === currentMonthKey) return;
-      } catch {
-        // ignore storage errors
-      }
-
-      const expiring = tenantsList.filter((t) => {
-        if (!t.is_active) return false;
-        const endDate =
-          t.lease_end_date ||
-          calculateLeaseEndDate(t.move_in_date, t.tenure_months || 11);
-        return getTenureRemainingInfo(endDate).isExpiringSoon;
-      });
-
-      if (expiring.length === 0) return;
-
-      const summary = expiring
-        .slice(0, 3)
-        .map((t) => {
-          const p = propertiesList.find((prop) => prop.property_id === t.property_id);
-          const u = unitsList.find((unit) => unit.unit_id === t.unit_id);
-          const info = getTenureRemainingInfo(t.lease_end_date);
-          return `${t.full_name} (${p?.property_name || ''} ${u?.unit_name || ''}: ${info.label})`;
-        })
-        .join(', ');
-
-      try {
-        new Notification('Tenure Expiring Soon — SRKP Rental Tool', {
-          body: `${expiring.length} tenant(s) in final 4 months: ${summary}`,
-        });
-        localStorage.setItem(sentKey, currentMonthKey);
-      } catch {
-        // ignore notification API errors in restricted contexts
-      }
-    },
-    []
-  );
-
-  useEffect(() => {
-    if (typeof window === 'undefined' || !('Notification' in window)) return;
-    if (Notification.permission === 'granted') {
-      dispatchTenureBrowserNotification(
-        dataset.tenants,
-        dataset.properties,
-        dataset.units
-      );
-    } else if (Notification.permission === 'default') {
-      const hasExpiring = dataset.tenants.some((t) => {
-        if (!t.is_active) return false;
-        return getTenureRemainingInfo(
-          t.lease_end_date || calculateLeaseEndDate(t.move_in_date, t.tenure_months || 11)
-        ).isExpiringSoon;
-      });
-      if (hasExpiring) {
-        Notification.requestPermission()
-          .then((perm) => {
-            setNotificationPermission(perm);
-            if (perm === 'granted') {
-              dispatchTenureBrowserNotification(
-                dataset.tenants,
-                dataset.properties,
-                dataset.units
-              );
-            }
-          })
-          .catch(() => {
-            // browser blocked automatic prompt without user gesture
-          });
+  // 4. Self-Hosted W3C Web Push Notifications
+  const handleEnablePhonePush = async () => {
+    if (!session?.authToken || session.accessType !== 'admin') return;
+    setPushBusy(true);
+    setPushFeedback(null);
+    const res = await enablePhonePushNotifications(session.authToken);
+    setNotificationPermission(res.permission);
+    if (res.ok) {
+      setPushSubscribed(true);
+      if (typeof res.subscriptionCount === 'number') {
+        setPushDeviceCount(res.subscriptionCount);
       }
     }
-  }, [dataset.tenants.length, dispatchTenureBrowserNotification]);
+    setPushFeedback({ ok: res.ok, message: res.message });
+    setPushBusy(false);
+  };
 
-  const handleRequestBrowserNotifications = async () => {
-    if (typeof window === 'undefined' || !('Notification' in window)) return;
-    try {
-      const perm = await Notification.requestPermission();
-      setNotificationPermission(perm);
-      if (perm === 'granted') {
-        localStorage.removeItem('srpk_tenure_notif_sent_month');
-        dispatchTenureBrowserNotification(
-          dataset.tenants,
-          dataset.properties,
-          dataset.units
-        );
-      }
-    } catch {
-      // ignore
-    }
+  const handleSendTestPush = async () => {
+    if (!session?.authToken || session.accessType !== 'admin') return;
+    setPushBusy(true);
+    setPushFeedback(null);
+    const res = await sendTestPhonePush(session.authToken);
+    setPushFeedback({ ok: res.ok, message: res.message });
+    setPushBusy(false);
   };
 
   // 5. Server-Managed Service Account Test, Push & Live Auto-Sync
@@ -1685,7 +1666,12 @@ export default function App() {
             selectedPropertyId={selectedPropertyId}
             ownerWhatsappPhone={dataset.settings.owner_whatsapp_phone}
             notificationPermission={notificationPermission}
-            onRequestBrowserNotifications={() => void handleRequestBrowserNotifications()}
+            pushBusy={pushBusy}
+            pushSubscribed={pushSubscribed}
+            pushDeviceCount={pushDeviceCount}
+            pushFeedback={pushFeedback}
+            onEnablePhonePush={() => void handleEnablePhonePush()}
+            onSendTestPush={() => void handleSendTestPush()}
             onChangeSelectedPropertyId={setSelectedPropertyId}
             onOpenProperties={() => setActiveView('properties')}
             onOpenUnits={() => setActiveView('units')}
@@ -1961,6 +1947,13 @@ export default function App() {
           isPulling={isPulling}
           isPushingAll={isPushingAll}
           pullFeedback={pullFeedback}
+          notificationPermission={notificationPermission}
+          pushBusy={pushBusy}
+          pushSubscribed={pushSubscribed}
+          pushDeviceCount={pushDeviceCount}
+          pushFeedback={pushFeedback}
+          onEnablePhonePush={() => void handleEnablePhonePush()}
+          onSendTestPush={() => void handleSendTestPush()}
           onClose={() => setShowSettingsModal(false)}
           onSaveSettings={handleSaveSettings}
           onChangeAutoLockTimer={handleChangeAutoLockTimer}

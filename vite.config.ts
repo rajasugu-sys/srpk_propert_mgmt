@@ -11,8 +11,9 @@ export default defineConfig(() => {
       tailwindcss(),
       VitePWA({
         registerType: 'autoUpdate',
+        filename: 'pwa-sw.js',
         useCredentials: true,
-        includeAssets: ['icon.svg', 'apple-touch-icon.png', 'pwa-192x192.png', 'pwa-512x512.png', 'pwa-maskable-512x512.png'],
+        includeAssets: ['icon.svg', 'apple-touch-icon.png', 'pwa-192x192.png', 'pwa-512x512.png', 'pwa-maskable-512x512.png', 'sw.js'],
         manifest: {
           id: '/',
           name: 'SRKP Rental Tool',
@@ -46,6 +47,7 @@ export default defineConfig(() => {
           ],
         },
         workbox: {
+          importScripts: ['/sw.js'],
           maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
           skipWaiting: true,
           clientsClaim: true,

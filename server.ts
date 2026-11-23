@@ -5,6 +5,12 @@ import type { Request, Response } from 'express';
 import fs from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import cron from 'node-cron';
+import {
+  generateVAPIDKeys,
+  sendNotification as sendWebPushNotification,
+  setVapidDetails,
+} from 'web-push';
 import { GoogleGenAI, Type } from '@google/genai';
 import {
   getSheetsConfigSummary,
@@ -17,6 +23,10 @@ import {
 } from './server/sheetsSync.ts';
 import type { ServerDatasetPayload, SyncTable } from './server/sheetsSync.ts';
 import { INITIAL_ESTATE_DATASET } from './src/data/initialEstateData.ts';
+import {
+  calculateLeaseEndDate,
+  getTenureRemainingInfo,
+} from './src/utils/billingEngine.ts';
 import type {
   AccessType,
   AccountAccessStatus,
@@ -34,10 +44,13 @@ const DATA_DIR = path.join(__dirname, 'data');
 const AGREEMENTS_DIR = path.join(DATA_DIR, 'agreements');
 const DB_FILE = path.join(DATA_DIR, 'estate-db.json');
 const AUTH_SECRET_FILE = path.join(DATA_DIR, 'auth-secret.key');
+const PUSH_CONFIG_FILE = path.join(DATA_DIR, 'push-config.json');
+const VAPID_SUBJECT = 'mailto:admin@srpkproperty.com';
 const TOKEN_TTL_MS = 24 * 60 * 60 * 1000;
 const MASTER_PIN_REGEX = /^[A-Za-z0-9]{12}$/;
 
 let cachedAuthSecret: string | null = null;
+let cachedVapidConfigured = false;
 
 function createGeminiClient(): GoogleGenAI {
   const apiKey = process.env.GEMINI_API_KEY;
@@ -502,13 +515,449 @@ async function requireAuthSession(
   return { payload, dataset, user };
 }
 
+interface StoredPushSubscription {
+  id: string;
+  endpoint: string;
+  expirationTime: number | null;
+  keys: {
+    p256dh: string;
+    auth: string;
+  };
+  userId: string;
+  userAgent: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface SentReminderLog {
+  month: string;
+  reminderKey: string;
+  title: string;
+  body: string;
+  sentAt: string;
+  deliveredCount: number;
+}
+
+interface PushStoreData {
+  vapidKeys: {
+    publicKey: string;
+    privateKey: string;
+  };
+  subscriptions: StoredPushSubscription[];
+  sentReminders: Record<string, SentReminderLog>;
+}
+
+async function persistPushStore(store: PushStoreData): Promise<void> {
+  await ensureDataDir();
+  await fs.writeFile(PUSH_CONFIG_FILE, JSON.stringify(store, null, 2), {
+    encoding: 'utf-8',
+    mode: 0o600,
+  });
+}
+
+async function readOrInitPushStore(): Promise<PushStoreData> {
+  await ensureDataDir();
+  const envPublic = (process.env.VAPID_PUBLIC_KEY || '').trim();
+  const envPrivate = (process.env.VAPID_PRIVATE_KEY || '').trim();
+
+  let store: PushStoreData | null = null;
+  let dirty = false;
+
+  try {
+    const raw = await fs.readFile(PUSH_CONFIG_FILE, 'utf-8');
+    const parsed = JSON.parse(raw) as Partial<PushStoreData>;
+    if (parsed && typeof parsed === 'object') {
+      store = {
+        vapidKeys: {
+          publicKey: String(parsed.vapidKeys?.publicKey || '').trim(),
+          privateKey: String(parsed.vapidKeys?.privateKey || '').trim(),
+        },
+        subscriptions: Array.isArray(parsed.subscriptions)
+          ? parsed.subscriptions
+          : [],
+        sentReminders:
+          parsed.sentReminders && typeof parsed.sentReminders === 'object'
+            ? parsed.sentReminders
+            : {},
+      };
+    }
+  } catch {
+    store = null;
+  }
+
+  if (!store) {
+    store = {
+      vapidKeys: { publicKey: '', privateKey: '' },
+      subscriptions: [],
+      sentReminders: {},
+    };
+    dirty = true;
+  }
+
+  if (envPublic && envPrivate) {
+    if (
+      store.vapidKeys.publicKey !== envPublic ||
+      store.vapidKeys.privateKey !== envPrivate
+    ) {
+      store.vapidKeys = { publicKey: envPublic, privateKey: envPrivate };
+      dirty = true;
+    }
+  } else if (!store.vapidKeys.publicKey || !store.vapidKeys.privateKey) {
+    const generated = generateVAPIDKeys();
+    store.vapidKeys = {
+      publicKey: generated.publicKey,
+      privateKey: generated.privateKey,
+    };
+    dirty = true;
+    console.log('Generated self-hosted VAPID key pair for W3C Web Push.');
+  }
+
+  if (dirty) {
+    await persistPushStore(store);
+  }
+
+  if (!cachedVapidConfigured) {
+    setVapidDetails(
+      VAPID_SUBJECT,
+      store.vapidKeys.publicKey,
+      store.vapidKeys.privateKey
+    );
+    cachedVapidConfigured = true;
+  }
+
+  return store;
+}
+
+function validatePushSubscriptionPayload(sub: unknown): {
+  valid: true;
+  endpoint: string;
+  expirationTime: number | null;
+  keys: { p256dh: string; auth: string };
+} | { valid: false; error: string } {
+  if (!sub || typeof sub !== 'object') {
+    return { valid: false, error: 'Missing push subscription object.' };
+  }
+  const obj = sub as {
+    endpoint?: unknown;
+    expirationTime?: unknown;
+    keys?: { p256dh?: unknown; auth?: unknown };
+  };
+  const endpoint = typeof obj.endpoint === 'string' ? obj.endpoint.trim() : '';
+  if (!endpoint || !endpoint.startsWith('https://') || endpoint.length > 2048) {
+    return {
+      valid: false,
+      error: 'Push subscription endpoint must be a valid HTTPS URL.',
+    };
+  }
+  const p256dh =
+    typeof obj.keys?.p256dh === 'string' ? obj.keys.p256dh.trim() : '';
+  const authKey = typeof obj.keys?.auth === 'string' ? obj.keys.auth.trim() : '';
+  if (
+    !p256dh ||
+    !authKey ||
+    p256dh.length > 512 ||
+    authKey.length > 512
+  ) {
+    return {
+      valid: false,
+      error: 'Push subscription keys (p256dh, auth) are required.',
+    };
+  }
+  const expirationTime =
+    typeof obj.expirationTime === 'number' && Number.isFinite(obj.expirationTime)
+      ? obj.expirationTime
+      : null;
+  return {
+    valid: true,
+    endpoint,
+    expirationTime,
+    keys: { p256dh, auth: authKey },
+  };
+}
+
+interface WebPushPayload {
+  title: string;
+  body: string;
+  icon?: string;
+  badge?: string;
+  tag?: string;
+  data?: Record<string, unknown>;
+}
+
+async function sendPushToAllSubscriptions(payload: WebPushPayload): Promise<{
+  sentCount: number;
+  removedCount: number;
+  failedCount: number;
+}> {
+  const store = await readOrInitPushStore();
+  if (store.subscriptions.length === 0) {
+    return { sentCount: 0, removedCount: 0, failedCount: 0 };
+  }
+
+  const serializedPayload = JSON.stringify({
+    title: payload.title,
+    body: payload.body,
+    icon: payload.icon || '/pwa-192x192.png',
+    badge: payload.badge || '/pwa-192x192.png',
+    tag: payload.tag || 'srpk-reminder',
+    data: payload.data || { url: '/' },
+  });
+
+  let sentCount = 0;
+  let failedCount = 0;
+  const expiredEndpoints = new Set<string>();
+
+  await Promise.all(
+    store.subscriptions.map(async (sub) => {
+      try {
+        await sendWebPushNotification(
+          {
+            endpoint: sub.endpoint,
+            expirationTime: sub.expirationTime,
+            keys: sub.keys,
+          },
+          serializedPayload
+        );
+        sentCount += 1;
+      } catch (err) {
+        const statusCode =
+          typeof err === 'object' &&
+          err !== null &&
+          'statusCode' in err &&
+          typeof (err as { statusCode?: unknown }).statusCode === 'number'
+            ? (err as { statusCode: number }).statusCode
+            : 0;
+        if (statusCode === 410 || statusCode === 404) {
+          expiredEndpoints.add(sub.endpoint);
+        } else {
+          failedCount += 1;
+          console.error(
+            `Web Push send failed for endpoint (${statusCode || 'err'}):`,
+            err instanceof Error ? err.message : err
+          );
+        }
+      }
+    })
+  );
+
+  if (expiredEndpoints.size > 0) {
+    const latestStore = await readOrInitPushStore();
+    latestStore.subscriptions = latestStore.subscriptions.filter(
+      (s) => !expiredEndpoints.has(s.endpoint)
+    );
+    await persistPushStore(latestStore);
+  }
+
+  return {
+    sentCount,
+    removedCount: expiredEndpoints.size,
+    failedCount,
+  };
+}
+
+function getIstDateParts(reference: Date = new Date()): {
+  istDateStr: string;
+  monthKey: string;
+  dayOfMonth: number;
+  monthYearLabel: string;
+  istTodayDate: Date;
+} {
+  const istDateStr = reference.toLocaleDateString('en-CA', {
+    timeZone: 'Asia/Kolkata',
+  });
+  const [yStr, mStr, dStr] = istDateStr.split('-');
+  const year = Number(yStr) || reference.getFullYear();
+  const month = Number(mStr) || reference.getMonth() + 1;
+  const day = Number(dStr) || reference.getDate();
+  const istTodayDate = new Date(year, month - 1, day);
+  const monthYearLabel = istTodayDate.toLocaleDateString('en-US', {
+    month: 'long',
+    year: 'numeric',
+  });
+
+  return {
+    istDateStr,
+    monthKey: `${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}`,
+    dayOfMonth: day,
+    monthYearLabel,
+    istTodayDate,
+  };
+}
+
+async function runMonthlyRemindersJob(options?: {
+  ignoreDayCheck?: boolean;
+}): Promise<{
+  ok: boolean;
+  skipped?: boolean;
+  reason?: string;
+  date: string;
+  monthKey: string;
+  remindersTriggered: number;
+  sentCount: number;
+  details: Array<{ reminderKey: string; title: string; sentCount: number }>;
+}> {
+  const { istDateStr, monthKey, dayOfMonth, monthYearLabel, istTodayDate } =
+    getIstDateParts();
+  const ignoreDayCheck = Boolean(options?.ignoreDayCheck);
+
+  if (dayOfMonth !== 1 && !ignoreDayCheck) {
+    return {
+      ok: true,
+      skipped: true,
+      reason: `Today (${istDateStr} IST) is not the 1st of the month.`,
+      date: istDateStr,
+      monthKey,
+      remindersTriggered: 0,
+      sentCount: 0,
+      details: [],
+    };
+  }
+
+  const store = await readOrInitPushStore();
+  if (store.subscriptions.length === 0) {
+    return {
+      ok: true,
+      skipped: false,
+      reason: 'No subscribed owner devices registered for Web Push.',
+      date: istDateStr,
+      monthKey,
+      remindersTriggered: 0,
+      sentCount: 0,
+      details: [],
+    };
+  }
+
+  const dataset = await readOrSeedEstateDataset();
+  const details: Array<{ reminderKey: string; title: string; sentCount: number }> = [];
+  let totalSent = 0;
+  let storeChanged = false;
+
+  // 1. Monthly Bill Generation Alert
+  const billKey = `${monthKey}::monthly_bills`;
+  if (!store.sentReminders[billKey]) {
+    const title = 'Generate Monthly Bills';
+    const body = `It's the 1st of ${monthYearLabel}. Generate and send monthly bills for active tenants.`;
+    const res = await sendPushToAllSubscriptions({
+      title,
+      body,
+      tag: `srpk-monthly-bills-${monthKey}`,
+      data: {
+        url: '/?view=invoices',
+        type: 'monthly_bills',
+        month: monthKey,
+      },
+    });
+    if (res.sentCount > 0) {
+      store.sentReminders[billKey] = {
+        month: monthKey,
+        reminderKey: 'monthly_bills',
+        title,
+        body,
+        sentAt: new Date().toISOString(),
+        deliveredCount: res.sentCount,
+      };
+      storeChanged = true;
+      totalSent += res.sentCount;
+      details.push({
+        reminderKey: 'monthly_bills',
+        title,
+        sentCount: res.sentCount,
+      });
+    }
+  }
+
+  // 2. 4-Month Lease Expiry Countdown Alerts
+  for (const tenant of dataset.tenants) {
+    if (!tenant.is_active) continue;
+    const endDate =
+      tenant.lease_end_date ||
+      calculateLeaseEndDate(tenant.move_in_date, tenant.tenure_months || 11);
+    const info = getTenureRemainingInfo(endDate, istTodayDate);
+    if (info.monthsRemainingExact < 0 || info.monthsRemainingExact > 4) {
+      continue;
+    }
+
+    const monthsLeft = Math.max(
+      1,
+      Math.min(4, Math.ceil(info.monthsRemainingExact || 0.01))
+    );
+    const reminderKey = `lease_expiry_${tenant.id}`;
+    const dedupKey = `${monthKey}::${reminderKey}`;
+    if (store.sentReminders[dedupKey]) continue;
+
+    const unit = dataset.units.find((u) => u.unit_id === tenant.unit_id);
+    const unitName = unit?.unit_name || tenant.unit_id;
+    const title = `Lease Expiry Reminder: ${tenant.full_name} (${unitName})`;
+    const body = `Lease expires on ${endDate} (${monthsLeft} month(s) remaining).`;
+
+    const res = await sendPushToAllSubscriptions({
+      title,
+      body,
+      tag: `srpk-lease-expiry-${tenant.id}-${monthKey}`,
+      data: {
+        url: '/?view=tenants',
+        type: 'lease_expiry',
+        tenantId: tenant.id,
+        month: monthKey,
+      },
+    });
+
+    if (res.sentCount > 0) {
+      store.sentReminders[dedupKey] = {
+        month: monthKey,
+        reminderKey,
+        title,
+        body,
+        sentAt: new Date().toISOString(),
+        deliveredCount: res.sentCount,
+      };
+      storeChanged = true;
+      totalSent += res.sentCount;
+      details.push({
+        reminderKey,
+        title,
+        sentCount: res.sentCount,
+      });
+    }
+  }
+
+  if (storeChanged) {
+    const latest = await readOrInitPushStore();
+    latest.sentReminders = {
+      ...latest.sentReminders,
+      ...store.sentReminders,
+    };
+    await persistPushStore(latest);
+  }
+
+  return {
+    ok: true,
+    skipped: false,
+    date: istDateStr,
+    monthKey,
+    remindersTriggered: details.length,
+    sentCount: totalSent,
+    details,
+  };
+}
+
 async function startServer() {
   const app = express();
   app.use(express.json({ limit: '15mb' }));
 
-  // Bootstrap DB & auth secret on startup
+  // Bootstrap DB, auth secret, and Web Push VAPID keys on startup
   await getAuthSecret();
   await readOrSeedEstateDataset();
+  await readOrInitPushStore();
+
+  // Schedule 1st-of-month reminders at 09:00 AM IST
+  cron.schedule(
+    '0 9 1 * *',
+    () => {
+      void runMonthlyRemindersJob();
+    },
+    { timezone: 'Asia/Kolkata' }
+  );
 
   // ==========================================
   // 0. Multi-Role Authentication Endpoints
@@ -1413,6 +1862,249 @@ async function startServer() {
     }
   });
 
+  // ==========================================
+  // 4. Self-Hosted W3C Web Push & Monthly Reminder Endpoints
+  // ==========================================
+
+  app.get('/api/push/vapid-public-key', async (req: Request, res: Response) => {
+    const auth = await requireAuthSession(req, res, ['admin']);
+    if (!auth) return;
+
+    try {
+      const store = await readOrInitPushStore();
+      res.json({
+        ok: true,
+        publicKey: store.vapidKeys.publicKey,
+      });
+    } catch (err) {
+      res.status(500).json({
+        ok: false,
+        error:
+          err instanceof Error
+            ? err.message
+            : 'Unable to load VAPID public key.',
+      });
+    }
+  });
+
+  app.get('/api/push/status', async (req: Request, res: Response) => {
+    const auth = await requireAuthSession(req, res, ['admin']);
+    if (!auth) return;
+
+    try {
+      const store = await readOrInitPushStore();
+      res.json({
+        ok: true,
+        subscriptionCount: store.subscriptions.length,
+        vapidConfigured: Boolean(
+          store.vapidKeys.publicKey && store.vapidKeys.privateKey
+        ),
+      });
+    } catch (err) {
+      res.status(500).json({
+        ok: false,
+        error:
+          err instanceof Error ? err.message : 'Unable to check push status.',
+      });
+    }
+  });
+
+  app.post('/api/push/subscribe', async (req: Request, res: Response) => {
+    const auth = await requireAuthSession(req, res, ['admin']);
+    if (!auth) return;
+
+    try {
+      const rawSub =
+        req.body && typeof req.body === 'object' && 'subscription' in req.body
+          ? (req.body as { subscription?: unknown }).subscription
+          : req.body;
+      const check = validatePushSubscriptionPayload(rawSub);
+      if (check.valid === false) {
+        res.status(400).json({ ok: false, error: check.error });
+        return;
+      }
+
+      const store = await readOrInitPushStore();
+      const now = new Date().toISOString();
+      const userAgent = String(req.headers['user-agent'] || '').slice(0, 200);
+      const existingIdx = store.subscriptions.findIndex(
+        (s) => s.endpoint === check.endpoint
+      );
+
+      if (existingIdx >= 0) {
+        store.subscriptions[existingIdx] = {
+          ...store.subscriptions[existingIdx],
+          expirationTime: check.expirationTime,
+          keys: check.keys,
+          userId: auth.user.user_id,
+          userAgent,
+          updatedAt: now,
+        };
+      } else {
+        store.subscriptions.push({
+          id: crypto.randomUUID(),
+          endpoint: check.endpoint,
+          expirationTime: check.expirationTime,
+          keys: check.keys,
+          userId: auth.user.user_id,
+          userAgent,
+          createdAt: now,
+          updatedAt: now,
+        });
+      }
+
+      await persistPushStore(store);
+      res.status(201).json({
+        ok: true,
+        subscriptionCount: store.subscriptions.length,
+        message: 'Phone Push Notifications enabled on this device!',
+      });
+    } catch (err) {
+      res.status(500).json({
+        ok: false,
+        error:
+          err instanceof Error
+            ? err.message
+            : 'Failed saving push subscription.',
+      });
+    }
+  });
+
+  app.delete('/api/push/subscribe', async (req: Request, res: Response) => {
+    const auth = await requireAuthSession(req, res, ['admin']);
+    if (!auth) return;
+
+    try {
+      const endpoint =
+        typeof req.body?.endpoint === 'string' ? req.body.endpoint.trim() : '';
+      if (!endpoint) {
+        res.status(400).json({ ok: false, error: 'Missing endpoint URL.' });
+        return;
+      }
+      const store = await readOrInitPushStore();
+      store.subscriptions = store.subscriptions.filter(
+        (s) => s.endpoint !== endpoint
+      );
+      await persistPushStore(store);
+      res.json({
+        ok: true,
+        subscriptionCount: store.subscriptions.length,
+      });
+    } catch (err) {
+      res.status(500).json({
+        ok: false,
+        error:
+          err instanceof Error
+            ? err.message
+            : 'Failed removing push subscription.',
+      });
+    }
+  });
+
+  app.post('/api/push/test', async (req: Request, res: Response) => {
+    const auth = await requireAuthSession(req, res, ['admin']);
+    if (!auth) return;
+
+    try {
+      const store = await readOrInitPushStore();
+      if (store.subscriptions.length === 0) {
+        res.status(400).json({
+          ok: false,
+          error:
+            'No subscribed devices found yet. Click "Enable Phone Push Notifications" first.',
+        });
+        return;
+      }
+
+      const result = await sendPushToAllSubscriptions({
+        title: 'SRKP Rental Tool — Push Active',
+        body: 'Phone push notifications are working! 1st-of-month bill & 4-month lease expiry reminders will arrive here.',
+        tag: `srpk-test-${Date.now()}`,
+        data: {
+          url: '/?view=invoices',
+          type: 'test',
+        },
+      });
+
+      if (result.sentCount === 0) {
+        res.status(502).json({
+          ok: false,
+          sentCount: 0,
+          removedCount: result.removedCount,
+          error:
+            'Could not deliver push notification to saved browser subscription(s). Try re-enabling notifications on this device.',
+        });
+        return;
+      }
+
+      res.json({
+        ok: true,
+        sentCount: result.sentCount,
+        removedCount: result.removedCount,
+        message: `Test push sent to ${result.sentCount} subscribed device(s).`,
+      });
+    } catch (err) {
+      res.status(500).json({
+        ok: false,
+        error:
+          err instanceof Error
+            ? err.message
+            : 'Failed sending test push notification.',
+      });
+    }
+  });
+
+  app.post('/api/cron/monthly-reminders', async (req: Request, res: Response) => {
+    try {
+      const configuredCronSecret = (process.env.CRON_SECRET || '').trim();
+      const headerCronSecret = String(req.headers['x-cron-secret'] || '').trim();
+      const bearerToken = extractBearerToken(req) || '';
+
+      const authorizedViaCronSecret =
+        Boolean(configuredCronSecret) &&
+        ((Boolean(headerCronSecret) &&
+          timingSafeStringMatch(headerCronSecret, configuredCronSecret)) ||
+          (Boolean(bearerToken) &&
+            timingSafeStringMatch(bearerToken, configuredCronSecret)));
+
+      let authorizedAdmin = false;
+      if (!authorizedViaCronSecret) {
+        if (!bearerToken) {
+          res.status(401).json({
+            ok: false,
+            error: 'Unauthorized. Valid CRON_SECRET or Admin token required.',
+          });
+          return;
+        }
+        const payload = await verifyAuthToken(bearerToken);
+        if (!payload || payload.accessType !== 'admin') {
+          res.status(401).json({
+            ok: false,
+            error: 'Unauthorized cron trigger caller.',
+          });
+          return;
+        }
+        authorizedAdmin = true;
+      }
+
+      const result = await runMonthlyRemindersJob({
+        ignoreDayCheck: Boolean(
+          (authorizedAdmin || authorizedViaCronSecret) &&
+            req.body?.ignoreDayCheck === true
+        ),
+      });
+      res.json(result);
+    } catch (err) {
+      res.status(500).json({
+        ok: false,
+        error:
+          err instanceof Error
+            ? err.message
+            : 'Failed executing monthly reminder trigger.',
+      });
+    }
+  });
+
   app.get('/healthz', (_req: Request, res: Response) => {
     res.status(200).json({ ok: true });
   });
@@ -1467,6 +2159,7 @@ async function startServer() {
           if (
             base === 'index.html' ||
             base === 'sw.js' ||
+            base === 'pwa-sw.js' ||
             base === 'manifest.webmanifest' ||
             base.startsWith('workbox-')
           ) {

@@ -4,6 +4,7 @@ import {
   AlertTriangle,
   ArrowDownToLine,
   ArrowUpToLine,
+  BellRing,
   Check,
   CheckCircle2,
   Clock,
@@ -16,6 +17,7 @@ import {
   RefreshCw,
   RotateCcw,
   Save,
+  Send,
   Settings,
   Smartphone,
   X,
@@ -54,6 +56,13 @@ interface SettingsModalProps {
   isPulling: boolean;
   isPushingAll: boolean;
   pullFeedback: string | null;
+  notificationPermission?: NotificationPermission | 'unsupported';
+  pushBusy?: boolean;
+  pushSubscribed?: boolean;
+  pushDeviceCount?: number;
+  pushFeedback?: { ok: boolean; message: string } | null;
+  onEnablePhonePush?: () => void;
+  onSendTestPush?: () => void;
   onClose: () => void;
   onSaveSettings: (next: AppSettings) => void;
   onChangeAutoLockTimer?: (mode: AutoLockTimerMode) => void;
@@ -76,6 +85,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   isPulling,
   isPushingAll,
   pullFeedback,
+  notificationPermission = 'default',
+  pushBusy = false,
+  pushSubscribed = false,
+  pushDeviceCount = 0,
+  pushFeedback = null,
+  onEnablePhonePush,
+  onSendTestPush,
   onClose,
   onSaveSettings,
   onChangeAutoLockTimer,
@@ -698,7 +714,78 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             </div>
           </form>
 
-          {/* 4. Install Mobile App & Share Link */}
+          {/* 4. Phone Push Notifications (Self-Hosted W3C Web Push) */}
+          <section className="rounded-2xl border border-emerald-200 bg-emerald-50/40 p-4 space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <BellRing className="w-4 h-4 text-[#489E44]" />
+                <h3 className="text-xs font-bold uppercase tracking-wider text-[#0f172a]">
+                  Phone Push Notifications (Web Push)
+                </h3>
+              </div>
+              <span
+                className={`rounded-md px-2 py-0.5 text-[10px] font-bold ${
+                  pushSubscribed || pushDeviceCount > 0
+                    ? 'bg-emerald-100 text-[#3E8E41]'
+                    : notificationPermission === 'denied'
+                      ? 'bg-rose-100 text-rose-800'
+                      : 'bg-gray-100 text-gray-700'
+                }`}
+              >
+                {pushDeviceCount > 0
+                  ? `${pushDeviceCount} Device${pushDeviceCount === 1 ? '' : 's'} Subscribed`
+                  : notificationPermission === 'denied'
+                    ? 'Blocked in Browser'
+                    : 'Not Subscribed'}
+              </span>
+            </div>
+
+            <p className="text-[11px] text-gray-600 leading-relaxed">
+              Receive real background alerts on mobile and desktop every <strong>1st of the month (9:00 AM IST)</strong> for monthly bill generation and 4-month lease expiry countdowns — even when the app is closed.
+            </p>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                disabled={pushBusy || notificationPermission === 'unsupported'}
+                onClick={onEnablePhonePush}
+                className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-[#489E44] px-3.5 py-2 text-xs font-bold text-white hover:bg-[#3E8E41] disabled:opacity-50 cursor-pointer min-h-[40px]"
+              >
+                <BellRing className="w-3.5 h-3.5" />
+                <span>
+                  {pushBusy
+                    ? 'Configuring...'
+                    : pushSubscribed
+                      ? 'Refresh Phone Push Notifications'
+                      : 'Enable Phone Push Notifications'}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                disabled={pushBusy || notificationPermission === 'unsupported'}
+                onClick={onSendTestPush}
+                className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-emerald-200 bg-white px-3.5 py-2 text-xs font-bold text-[#0f172a] hover:bg-emerald-50 disabled:opacity-50 cursor-pointer min-h-[40px]"
+              >
+                <Send className="w-3.5 h-3.5 text-[#489E44]" />
+                <span>Send Test Push Notification</span>
+              </button>
+            </div>
+
+            {pushFeedback && (
+              <div
+                className={`rounded-xl border px-3 py-2 text-xs font-semibold ${
+                  pushFeedback.ok
+                    ? 'border-emerald-200 bg-emerald-50 text-[#3E8E41]'
+                    : 'border-rose-200 bg-rose-50 text-rose-800'
+                }`}
+              >
+                {pushFeedback.message}
+              </div>
+            )}
+          </section>
+
+          {/* 5. Install Mobile App & Share Link */}
           <section className="rounded-2xl border border-gray-200 bg-gray-50/70 p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div className="flex items-center gap-3 min-w-0">
               <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-[#489E44]">

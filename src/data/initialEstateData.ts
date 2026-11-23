@@ -11,10 +11,9 @@ import type {
   Unit,
   UtilityReading,
 } from '../types/estate.ts';
-import { buildUpiPaymentLink, isInvoiceLockedStatus } from '../utils/billingEngine.ts';
+import { buildDefaultWaterReference, isInvoiceLockedStatus } from '../utils/billingEngine.ts';
 
 export const DEFAULT_APP_SETTINGS: AppSettings = {
-  merchant_upi_id: 'srpk.estate@okicici',
   merchant_name: 'SRKP Rental Management',
   owner_whatsapp_phone: '+919845011223',
   last_synced_at: null,
@@ -536,6 +535,9 @@ function makeSeedInvoice(params: {
   const amountPaid = status === 'Paid & Closed' ? totalPayableToOwner : 0;
   const balanceDue = Math.max(0, totalPayableToOwner - amountPaid);
   const isLocked = isInvoiceLockedStatus(status);
+  const motorBillAmount =
+    houseMaint && unitCount > 0 ? Math.round(houseMaint.common_eb_amount / unitCount) : 0;
+  const othersAmount = Math.max(0, bldgShare - motorBillAmount);
 
   return {
     id,
@@ -572,12 +574,17 @@ function makeSeedInvoice(params: {
     balance_due: balanceDue,
     payment_status: status,
     is_locked: isLocked,
-    upi_link: buildUpiPaymentLink({
-      upiId: DEFAULT_APP_SETTINGS.merchant_upi_id,
-      payeeName: DEFAULT_APP_SETTINGS.merchant_name,
-      amount: balanceDue > 0 ? balanceDue : totalPayableToOwner,
-      note: `${id} ${property.property_name} ${unit.unit_name}`,
+    keb_account_id: unit.eb_rr_number,
+    water_reference: buildDefaultWaterReference({
+      waterRr1: unit.water_rr_number,
+      waterRr2: unit.water_rr_number2,
+      prev1: reading.prev_reading_1,
+      curr1: reading.curr_reading_1,
+      prev2: reading.prev_reading_2,
+      curr2: reading.curr_reading_2,
     }),
+    motor_bill_amount: motorBillAmount,
+    others_amount: othersAmount,
     due_date: `${reading.billing_month}-05`,
     generated_at: '2026-11-05T12:00:00Z',
     paid_at: paidAt,
@@ -637,7 +644,7 @@ export const INITIAL_REQUESTS: MaintenanceRequest[] = [
     title: 'Master bathroom angle valve replacement',
     description: 'Slow drip behind flush cistern valve; replaced brass angle cock and tested.',
     status: 'Resolved',
-    reported_by: 'Tenant Portal',
+    reported_by: 'Resident',
     created_at: '2026-11-10T09:15:00Z',
     updated_at: '2026-11-12T16:30:00Z',
     resolved_at: '2026-11-12T16:30:00Z',
@@ -655,7 +662,7 @@ export const INITIAL_REQUESTS: MaintenanceRequest[] = [
     title: 'Kitchen 16A geyser socket tripping MCB',
     description: 'MCB trips after 10 minutes when kitchen geyser and microwave run together.',
     status: 'In Progress',
-    reported_by: 'Tenant Portal',
+    reported_by: 'Resident',
     created_at: '2026-11-17T11:20:00Z',
     updated_at: '2026-11-18T14:00:00Z',
     resolved_at: null,

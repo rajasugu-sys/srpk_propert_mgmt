@@ -35,92 +35,118 @@ export function normalizeWhatsAppDigits(phone: string): string {
   return digits;
 }
 
-export function buildUpiPaymentLink(params: {
-  upiId: string;
-  payeeName: string;
-  amount: number;
-  note: string;
+export function formatFullMonthYearLabel(yyyyMm: string): string {
+  const [y, m] = yyyyMm.split('-').map(Number);
+  if (!y || !m) return yyyyMm;
+  const date = new Date(y, m - 1, 1);
+  const fullMonth = date.toLocaleDateString('en-IN', { month: 'long' });
+  return `${fullMonth} Month - ${y}`;
+}
+
+export function formatInvoicePaidDate(paidAt: string | null | undefined): string {
+  if (!paidAt || !String(paidAt).trim()) return '';
+  const raw = String(paidAt).trim();
+  const isoMatch = /^(\d{4})-(\d{2})-(\d{2})/.exec(raw);
+  if (isoMatch) {
+    const d = new Date(Number(isoMatch[1]), Number(isoMatch[2]) - 1, Number(isoMatch[3]));
+    if (!Number.isNaN(d.getTime())) {
+      const dd = String(d.getDate()).padStart(2, '0');
+      const mmm = d.toLocaleDateString('en-IN', { month: 'short' });
+      const yyyy = d.getFullYear();
+      return `${dd}-${mmm}-${yyyy}`;
+    }
+  }
+  return raw;
+}
+
+export function buildDefaultWaterReference(params: {
+  waterRr1?: string;
+  waterRr2?: string;
+  prev1: number;
+  curr1: number;
+  prev2?: number;
+  curr2?: number;
 }): string {
-  const safeAmt = Math.max(1, Math.round(params.amount));
-  const qs = new URLSearchParams({
-    pa: params.upiId.trim(),
-    pn: params.payeeName.trim(),
-    am: safeAmt.toFixed(2),
-    cu: 'INR',
-    tn: params.note.trim(),
-  });
-  return `upi://pay?${qs.toString()}`;
+  const parts: string[] = [];
+  const rr1 = (params.waterRr1 || '').trim();
+  const rr2 = (params.waterRr2 || '').trim();
+  const p1 = Math.round(params.prev1 || 0);
+  const c1 = Math.round(params.curr1 || 0);
+  const p2 = Math.round(params.prev2 || 0);
+  const c2 = Math.round(params.curr2 || 0);
+
+  if (rr1 || c1 > 0 || p1 > 0) {
+    parts.push(`(${rr1 ? `${rr1}-` : ''}${p1}/${c1})`);
+  }
+  if (rr2 || c2 > 0 || p2 > 0) {
+    parts.push(`(${rr2 ? `${rr2}-` : 'M2-'}${p2}/${c2})`);
+  }
+  return parts.join('');
 }
 
 export function isInvoiceLockedStatus(status: InvoiceRecord['payment_status']): boolean {
   return status === 'Partially Paid & Closed' || status === 'Paid & Closed';
 }
 
-export function formatWhatsAppInvoiceMessage(
-  invoice: InvoiceRecord,
-  upiId: string,
-  senderSignature: string = 'SRKP Rental Management'
-): string {
-  const monthLabel = formatBillingMonthLabel(invoice.billing_month);
-  const ebModeNote = invoice.eb_paid_to_owner
-    ? 'Payable to Owner'
-    : 'Paid Directly to Utility Provider';
-
-  const waterLine =
-    invoice.water_curr_2 > 0 || invoice.water_prev_2 > 0
-      ? `• Water (M1: ${invoice.water_prev_1}→${invoice.water_curr_1}, M2: ${invoice.water_prev_2}→${invoice.water_curr_2} = ${invoice.water_net_units} units × ₹${invoice.water_rate}): ${formatINR(invoice.water_amount)}`
-      : `• Water (${invoice.water_prev_1}→${invoice.water_curr_1} = ${invoice.water_net_units} units × ₹${invoice.water_rate}): ${formatINR(invoice.water_amount)}`;
-
-  const bldgShareLine =
-    invoice.building_maintenance_total > 0 && invoice.building_unit_count > 0
-      ? `• Building Maint Share (${formatINR(invoice.building_maintenance_total)} ÷ ${invoice.building_unit_count} units): ${formatINR(invoice.building_maintenance_share)}`
-      : `• Building Maint Share (Common EB & Repairs): ${formatINR(invoice.building_maintenance_share)}`;
-
-  const arrearsLines =
-    invoice.carried_forward_balance > 0
-      ? [
-          `• Previous Arrears / Carried Forward Balance: ${formatINR(invoice.carried_forward_balance)}`,
-        ]
-      : [];
-
-  const paymentStatusLines =
-    invoice.amount_paid > 0
-      ? [
-          `Amount Paid: ${formatINR(invoice.amount_paid)}`,
-          `*Balance Due: ${formatINR(invoice.balance_due)}* (${invoice.payment_status})`,
-        ]
-      : [`Status: *${invoice.payment_status}*`];
-
-  const lines = [
-    `*${invoice.property_name} — Monthly Rent & Utility Receipt*`,
-    `Month: *${monthLabel}*`,
-    `House: *${invoice.property_name}*`,
-    `Unit: *${invoice.unit_name}* (${invoice.unit_type} · ${invoice.floor})`,
-    `Tenant: *${invoice.tenant_name}* (${invoice.lease_type})`,
-    `Invoice ID: ${invoice.id}`,
-    ``,
-    `*Itemized Breakdown:*`,
-    ...(invoice.lease_type === 'Rental'
-      ? [`• Monthly Rent: ${formatINR(invoice.rent_amount)}`]
-      : [`• Lease Terms: ₹0 Monthly Rent (Lease Deposit Active)`]),
-    `• Monthly Cleaning Fee (Fixed Tenant Maint): ${formatINR(invoice.tenant_cleaning_fee)}`,
-    bldgShareLine,
-    waterLine,
-    `• Unit Electricity (EB): ${formatINR(invoice.eb_amount)} _(${ebModeNote})_`,
-    ...arrearsLines,
-    `--------------------------------`,
-    `Total Bill Value: ${formatINR(invoice.total_bill_value)}`,
-    `*Total Payable to Owner: ${formatINR(invoice.total_payable_to_owner)}*`,
-    ...paymentStatusLines,
-    ``,
-    `Pay Owner via UPI: *${upiId}*`,
-    `UPI Link: ${invoice.upi_link}`,
-    ``,
-    `Thank you — ${senderSignature}`,
-  ];
-
-  return lines.join('\n');
+export interface InvoiceBreakdownSummary {
+  rent: number;
+  water: number;
+  cleaning: number;
+  motor: number;
+  others: number;
+  totalAmount: number;
+  eb: number;
+  ebModeLabel: 'Owner' | 'Direct';
+  paidDateLabel: string;
 }
+
+export function getInvoiceBreakdown(inv: InvoiceRecord): InvoiceBreakdownSummary {
+  const rent = Math.round(inv.rent_amount || 0);
+  const water = Math.round(inv.water_amount || 0);
+  const cleaning = Math.round(inv.tenant_cleaning_fee || 0);
+
+  const motorFromItems = inv.building_maintenance_items.find(
+    (item) =>
+      item.name.toLowerCase().includes('motor') ||
+      item.name.toLowerCase().includes('common')
+  );
+  const motor =
+    inv.motor_bill_amount !== undefined
+      ? Math.round(inv.motor_bill_amount)
+      : motorFromItems && inv.building_unit_count > 0
+        ? Math.round(motorFromItems.amount / inv.building_unit_count)
+        : 0;
+
+  const others =
+    inv.others_amount !== undefined
+      ? Math.round(inv.others_amount)
+      : Math.max(
+          0,
+          Math.round(
+            inv.building_maintenance_share -
+              motor +
+              (inv.carried_forward_balance || 0)
+          )
+        );
+
+  const totalAmount = rent + water + cleaning + motor + others;
+  const eb = Math.round(inv.eb_amount || 0);
+  const ebModeLabel: 'Owner' | 'Direct' = inv.eb_paid_to_owner ? 'Owner' : 'Direct';
+  const paidDateLabel = formatInvoicePaidDate(inv.paid_at);
+
+  return {
+    rent,
+    water,
+    cleaning,
+    motor,
+    others,
+    totalAmount,
+    eb,
+    ebModeLabel,
+    paidDateLabel,
+  };
+}
+
 
 export function getFloorSortRank(floor: string): number {
   const f = floor.toLowerCase();

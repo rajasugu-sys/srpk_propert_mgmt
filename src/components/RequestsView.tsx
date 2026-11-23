@@ -246,7 +246,7 @@ export const RequestsView: React.FC<RequestsViewProps> = ({
             </h2>
             <p className="text-xs text-slate-500 mt-0.5">
               Synced live with the <span className="font-mono font-semibold">Requests</span>{' '}
-              tab in Google Sheets · Receives submissions directly from Tenant Portal links
+              tab in Google Sheets
             </p>
           </div>
         </div>

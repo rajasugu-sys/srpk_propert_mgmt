@@ -1,19 +1,23 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
+import html2canvas from 'html2canvas';
 import {
   AlertTriangle,
   Check,
   CheckCircle2,
   Clock,
-  Copy,
+  Download,
   Eye,
+  FileDown,
+  Image as ImageIcon,
+  LayoutGrid,
   Lock,
-  MessageSquare,
   Pencil,
   Plus,
   Printer,
+  Share2,
+  Table2,
   X,
 } from 'lucide-react';
-import { QRCodeSVG } from 'qrcode.react';
 import {
   AppSettings,
   HouseMaintenanceBill,
@@ -25,14 +29,18 @@ import {
   UtilityReading,
 } from '../types/estate';
 import {
-  buildUpiPaymentLink,
+  buildDefaultWaterReference,
   formatBillingMonthLabel,
   formatINR,
-  formatWhatsAppInvoiceMessage,
+  getInvoiceBreakdown,
   isInvoiceLockedStatus,
-  normalizeWhatsAppDigits,
 } from '../utils/billingEngine';
+import { exportInvoicesSummaryPdf } from '../utils/invoicePdfExport';
+import { InvoiceImageTemplate } from './InvoiceImageTemplate';
 import { MobileShellHeader } from './MobileShellHeader';
+
+const INVOICES_VIEW_MODE_KEY = 'srpk_invoices_view_mode_v1';
+type InvoiceViewMode = 'card' | 'table';
 
 interface InvoicesViewProps {
   properties: PropertyHouse[];
@@ -50,7 +58,6 @@ interface InvoicesViewProps {
   onCreateInvoice: (invoice: InvoiceRecord) => void;
   onUpdateInvoice: (invoice: InvoiceRecord) => void;
   isReadOnly?: boolean;
-  senderSignature?: string;
 }
 
 const ALL_STATUSES: PaymentStatus[] = [
@@ -90,24 +97,50 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
   onCreateInvoice,
   onUpdateInvoice,
   isReadOnly = false,
-  senderSignature = 'SRKP Rental Management',
 }) => {
   const [floorFilter, setFloorFilter] = useState<string>('ALL');
   const [unitFilter, setUnitFilter] = useState<string>('ALL');
   const [statusFilter, setStatusFilter] = useState<'ALL' | PaymentStatus>('ALL');
+  const [viewMode, setViewMode] = useState<InvoiceViewMode>(() => {
+    try {
+      const saved = localStorage.getItem(INVOICES_VIEW_MODE_KEY);
+      return saved === 'table' ? 'table' : 'card';
+    } catch {
+      return 'card';
+    }
+  });
+
+  const handleChangeViewMode = (mode: InvoiceViewMode) => {
+    setViewMode(mode);
+    try {
+      localStorage.setItem(INVOICES_VIEW_MODE_KEY, mode);
+    } catch {
+      // Ignore storage write issues
+    }
+  };
 
   const [genWarning, setGenWarning] = useState<string | null>(null);
   const [genSuccess, setGenSuccess] = useState<string | null>(null);
 
   const [viewingInvoiceId, setViewingInvoiceId] = useState<string | null>(null);
   const [printingInvoiceId, setPrintingInvoiceId] = useState<string | null>(null);
-  const [copiedKey, setCopiedKey] = useState<string | null>(null);
+
+  // Non-Editable PNG Invoice Preview & Share Modal State
+  const [sharingInvoiceId, setSharingInvoiceId] = useState<string | null>(null);
+  const [isGeneratingImage, setIsGeneratingImage] = useState(false);
+  const [shareFeedback, setShareFeedback] = useState<string | null>(null);
+  const invoiceCaptureRef = useRef<HTMLDivElement | null>(null);
 
   // Edit / Update Status Modal state
   const [editingInvoiceId, setEditingInvoiceId] = useState<string | null>(null);
   const [editStatus, setEditStatus] = useState<PaymentStatus>('Unpaid');
   const [editAmountPaid, setEditAmountPaid] = useState<string>('0');
+  const [editPaidDate, setEditPaidDate] = useState<string>('');
   const [editEbPaidToOwner, setEditEbPaidToOwner] = useState<boolean>(true);
+  const [editKebAccountId, setEditKebAccountId] = useState<string>('');
+  const [editWaterReference, setEditWaterReference] = useState<string>('');
+  const [editMotorBill, setEditMotorBill] = useState<string>('0');
+  const [editOthersAmount, setEditOthersAmount] = useState<string>('0');
   const [editError, setEditError] = useState<string | null>(null);
 
   const scopedUnits = useMemo(
@@ -229,6 +262,15 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
       (ebPaidToOwner ? ebAmount : 0) +
       carriedForwardBalance;
 
+    const motorBillAmount =
+      houseMaint && unitCount > 0 ? Math.round(houseMaint.common_eb_amount / unitCount) : 0;
+    const othersAmount = Math.max(0, bldgShare - motorBillAmount) + carriedForwardBalance;
+
+    const waterPrev1 = reading?.prev_reading_1 ?? unit.last_water_reading_1;
+    const waterCurr1 = reading?.curr_reading_1 ?? unit.last_water_reading_1;
+    const waterPrev2 = reading?.prev_reading_2 ?? unit.last_water_reading_2;
+    const waterCurr2 = reading?.curr_reading_2 ?? unit.last_water_reading_2;
+
     const invId = `INV-${billingMonth.replace('-', '')}-${unit.unit_id.replace('UNIT-', '')}`;
     const invoice: InvoiceRecord = {
       id: invId,
@@ -251,10 +293,10 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
       building_maintenance_items: bldgItems,
       eb_amount: ebAmount,
       eb_paid_to_owner: ebPaidToOwner,
-      water_prev_1: reading?.prev_reading_1 ?? unit.last_water_reading_1,
-      water_curr_1: reading?.curr_reading_1 ?? unit.last_water_reading_1,
-      water_prev_2: reading?.prev_reading_2 ?? unit.last_water_reading_2,
-      water_curr_2: reading?.curr_reading_2 ?? unit.last_water_reading_2,
+      water_prev_1: waterPrev1,
+      water_curr_1: waterCurr1,
+      water_prev_2: waterPrev2,
+      water_curr_2: waterCurr2,
       water_net_units: reading?.net_consumption ?? 0,
       water_rate: reading?.water_rate ?? tenant.water_charge,
       water_amount: waterAmount,
@@ -265,12 +307,17 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
       balance_due: totalPayableToOwner,
       payment_status: 'Unpaid',
       is_locked: false,
-      upi_link: buildUpiPaymentLink({
-        upiId: settings.merchant_upi_id,
-        payeeName: settings.merchant_name,
-        amount: totalPayableToOwner,
-        note: `${invId} ${property.property_name} ${unit.unit_name}`,
+      keb_account_id: unit.eb_rr_number,
+      water_reference: buildDefaultWaterReference({
+        waterRr1: unit.water_rr_number,
+        waterRr2: unit.water_rr_number2,
+        prev1: waterPrev1,
+        curr1: waterCurr1,
+        prev2: waterPrev2,
+        curr2: waterCurr2,
       }),
+      motor_bill_amount: motorBillAmount,
+      others_amount: othersAmount,
       generated_at: new Date().toISOString(),
       paid_at: null,
       closed_at: null,
@@ -366,46 +413,52 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
     }
   };
 
-  const handleToggleEbCollectionMode = (inv: InvoiceRecord, paidToOwner: boolean) => {
-    if (inv.is_locked || inv.eb_paid_to_owner === paidToOwner) return;
-
-    const nextTotalPayableToOwner =
-      inv.rent_amount +
-      inv.tenant_cleaning_fee +
-      inv.building_maintenance_share +
-      inv.water_amount +
-      (paidToOwner ? inv.eb_amount : 0) +
-      inv.carried_forward_balance;
-
-    const cappedPaid = Math.min(inv.amount_paid, nextTotalPayableToOwner);
-    const nextBalanceDue =
-      inv.payment_status === 'Paid & Closed'
-        ? 0
-        : Math.max(0, nextTotalPayableToOwner - cappedPaid);
-
-    const updated: InvoiceRecord = {
-      ...inv,
-      eb_paid_to_owner: paidToOwner,
-      total_payable_to_owner: nextTotalPayableToOwner,
-      amount_paid: cappedPaid,
-      balance_due: nextBalanceDue,
-      upi_link: buildUpiPaymentLink({
-        upiId: settings.merchant_upi_id,
-        payeeName: settings.merchant_name,
-        amount: nextBalanceDue > 0 ? nextBalanceDue : nextTotalPayableToOwner,
-        note: `${inv.id} ${inv.property_name} ${inv.unit_name}`,
-      }),
-    };
-
-    onUpdateInvoice(updated);
-  };
-
   const openEditStatusModal = (inv: InvoiceRecord) => {
     if (inv.is_locked) return;
+    const unit = units.find((u) => u.unit_id === inv.unit_id);
+    const motorFromItems = inv.building_maintenance_items.find(
+      (item) =>
+        item.name.toLowerCase().includes('motor') ||
+        item.name.toLowerCase().includes('common')
+    );
+    const defaultMotor =
+      inv.motor_bill_amount !== undefined
+        ? Math.round(inv.motor_bill_amount)
+        : motorFromItems && inv.building_unit_count > 0
+          ? Math.round(motorFromItems.amount / inv.building_unit_count)
+          : 0;
+    const defaultOthers =
+      inv.others_amount !== undefined
+        ? Math.round(inv.others_amount)
+        : Math.max(
+            0,
+            Math.round(
+              inv.building_maintenance_share -
+                defaultMotor +
+                (inv.carried_forward_balance || 0)
+            )
+          );
+    const defaultWaterRef =
+      inv.water_reference !== undefined && inv.water_reference.trim() !== ''
+        ? inv.water_reference
+        : buildDefaultWaterReference({
+            waterRr1: unit?.water_rr_number,
+            waterRr2: unit?.water_rr_number2,
+            prev1: inv.water_prev_1,
+            curr1: inv.water_curr_1,
+            prev2: inv.water_prev_2,
+            curr2: inv.water_curr_2,
+          });
+
     setEditingInvoiceId(inv.id);
     setEditStatus(inv.payment_status);
     setEditAmountPaid(String(inv.amount_paid || 0));
+    setEditPaidDate(inv.paid_at ? String(inv.paid_at).slice(0, 10) : '');
     setEditEbPaidToOwner(inv.eb_paid_to_owner);
+    setEditKebAccountId(inv.keb_account_id ?? unit?.eb_rr_number ?? '');
+    setEditWaterReference(defaultWaterRef);
+    setEditMotorBill(String(defaultMotor));
+    setEditOthersAmount(String(defaultOthers));
     setEditError(null);
   };
 
@@ -416,20 +469,25 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
 
   const editPreviewTotalPayable = useMemo(() => {
     if (!editingInvoice) return 0;
+    const motorVal = Math.max(0, Math.round(Number(editMotorBill) || 0));
+    const othersVal = Math.max(0, Math.round(Number(editOthersAmount) || 0));
     return (
       editingInvoice.rent_amount +
       editingInvoice.tenant_cleaning_fee +
-      editingInvoice.building_maintenance_share +
+      motorVal +
+      othersVal +
       editingInvoice.water_amount +
-      (editEbPaidToOwner ? editingInvoice.eb_amount : 0) +
-      editingInvoice.carried_forward_balance
+      (editEbPaidToOwner ? editingInvoice.eb_amount : 0)
     );
-  }, [editingInvoice, editEbPaidToOwner]);
+  }, [editingInvoice, editEbPaidToOwner, editMotorBill, editOthersAmount]);
 
   const handleSaveStatusUpdate = (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingInvoice || editingInvoice.is_locked) return;
     setEditError(null);
+
+    const motorVal = Math.max(0, Math.round(Number(editMotorBill) || 0));
+    const othersVal = Math.max(0, Math.round(Number(editOthersAmount) || 0));
 
     let nextPaid = 0;
     if (editStatus === 'Unpaid') {
@@ -465,23 +523,36 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
         : Math.max(0, editPreviewTotalPayable - nextPaid);
     const nextLocked = isInvoiceLockedStatus(editStatus);
     const todayIso = new Date().toISOString().slice(0, 10);
+    const nextTotalBillValue =
+      editingInvoice.rent_amount +
+      editingInvoice.tenant_cleaning_fee +
+      motorVal +
+      othersVal +
+      editingInvoice.water_amount +
+      editingInvoice.eb_amount;
 
     const updated: InvoiceRecord = {
       ...editingInvoice,
       eb_paid_to_owner: editEbPaidToOwner,
+      building_maintenance_share: Math.max(
+        0,
+        motorVal + othersVal - (editingInvoice.carried_forward_balance || 0)
+      ),
+      keb_account_id: editKebAccountId.trim(),
+      water_reference: editWaterReference.trim(),
+      motor_bill_amount: motorVal,
+      others_amount: othersVal,
+      total_bill_value: nextTotalBillValue,
       total_payable_to_owner: editPreviewTotalPayable,
       amount_paid: nextPaid,
       balance_due: nextBalance,
       payment_status: editStatus,
       is_locked: nextLocked,
-      paid_at: nextPaid > 0 ? editingInvoice.paid_at || todayIso : null,
+      paid_at:
+        nextPaid > 0
+          ? editPaidDate.trim() || editingInvoice.paid_at || todayIso
+          : null,
       closed_at: nextLocked ? todayIso : null,
-      upi_link: buildUpiPaymentLink({
-        upiId: settings.merchant_upi_id,
-        payeeName: settings.merchant_name,
-        amount: nextBalance > 0 ? nextBalance : editPreviewTotalPayable,
-        note: `${editingInvoice.id} ${editingInvoice.property_name} ${editingInvoice.unit_name}`,
-      }),
     };
 
     onUpdateInvoice(updated);
@@ -519,6 +590,19 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
     [invoices, viewingInvoiceId]
   );
 
+  const sharingInvoice = useMemo(
+    () => invoices.find((inv) => inv.id === sharingInvoiceId) || null,
+    [invoices, sharingInvoiceId]
+  );
+
+  const sharingUnit = useMemo(
+    () =>
+      sharingInvoice
+        ? units.find((u) => u.unit_id === sharingInvoice.unit_id) || null
+        : null,
+    [units, sharingInvoice]
+  );
+
   const printableInvoice = useMemo(
     () =>
       invoices.find((inv) => inv.id === (printingInvoiceId || viewingInvoiceId)) ||
@@ -533,18 +617,113 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
     }, 80);
   };
 
-  const copyWhatsAppText = async (invoice: InvoiceRecord) => {
-    const msg = formatWhatsAppInvoiceMessage(
-      invoice,
-      settings.merchant_upi_id,
-      senderSignature
+  const openShareImageModal = (invoice: InvoiceRecord) => {
+    setShareFeedback(null);
+    setSharingInvoiceId(invoice.id);
+  };
+
+  const captureInvoicePngBlob = async (): Promise<{
+    blob: Blob;
+    fileName: string;
+  } | null> => {
+    if (!invoiceCaptureRef.current || !sharingInvoice) return null;
+    if (document.fonts && document.fonts.ready) {
+      await document.fonts.ready;
+    }
+    const canvas = await html2canvas(invoiceCaptureRef.current, {
+      scale: 2,
+      backgroundColor: '#ffffff',
+      useCORS: true,
+      logging: false,
+    });
+    const blob = await new Promise<Blob | null>((resolve) =>
+      canvas.toBlob(resolve, 'image/png')
     );
+    if (!blob) return null;
+    const safeTenant = sharingInvoice.tenant_name
+      .trim()
+      .replace(/[^a-zA-Z0-9]+/g, '_')
+      .replace(/^_+|_+$/g, '');
+    const fileName = `${safeTenant || sharingInvoice.unit_name}_${
+      sharingInvoice.billing_month
+    }_Invoice.png`;
+    return { blob, fileName };
+  };
+
+  const triggerPngDownload = (blob: Blob, fileName: string) => {
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = fileName;
+    document.body.appendChild(anchor);
+    anchor.click();
+    document.body.removeChild(anchor);
+    setTimeout(() => URL.revokeObjectURL(url), 1500);
+  };
+
+  const handleDownloadInvoicePng = async () => {
+    if (isGeneratingImage || !sharingInvoice) return;
+    setIsGeneratingImage(true);
+    setShareFeedback(null);
     try {
-      await navigator.clipboard.writeText(msg);
-      setCopiedKey(invoice.id);
-      setTimeout(() => setCopiedKey(null), 2000);
+      const captured = await captureInvoicePngBlob();
+      if (!captured) {
+        setShareFeedback('Could not generate invoice image. Please try again.');
+        return;
+      }
+      triggerPngDownload(captured.blob, captured.fileName);
+      setShareFeedback(`Saved ${captured.fileName}`);
     } catch {
-      // ignore clipboard errors
+      setShareFeedback('Could not render invoice PNG. Please retry.');
+    } finally {
+      setIsGeneratingImage(false);
+    }
+  };
+
+  const handleShareInvoicePng = async () => {
+    if (isGeneratingImage || !sharingInvoice) return;
+    setIsGeneratingImage(true);
+    setShareFeedback(null);
+    try {
+      const captured = await captureInvoicePngBlob();
+      if (!captured) {
+        setShareFeedback('Could not generate invoice image. Please try again.');
+        return;
+      }
+      const file = new File([captured.blob], captured.fileName, {
+        type: 'image/png',
+      });
+      const canNativeShareFiles =
+        typeof navigator !== 'undefined' &&
+        typeof navigator.share === 'function' &&
+        (!navigator.canShare || navigator.canShare({ files: [file] }));
+
+      if (canNativeShareFiles) {
+        try {
+          await navigator.share({
+            files: [file],
+            title: `${sharingInvoice.tenant_name} — ${formatBillingMonthLabel(
+              sharingInvoice.billing_month
+            )} Invoice`,
+          });
+          setShareFeedback('Invoice image shared.');
+          return;
+        } catch (err) {
+          if (err instanceof Error && err.name === 'AbortError') {
+            return;
+          }
+          // Fall back to direct download if browser blocks file share
+        }
+      }
+
+      triggerPngDownload(captured.blob, captured.fileName);
+      setShareFeedback(
+        'PNG downloaded — attach this image directly in WhatsApp!'
+      );
+    } catch {
+      setShareFeedback('Could not share invoice image. Please try Download PNG.');
+    } finally {
+      setIsGeneratingImage(false);
     }
   };
 
@@ -553,7 +732,7 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
       <div className="print:hidden">
         <MobileShellHeader
           title="Invoices"
-          subtitle={`Billing, EB Mode & WhatsApp · ${formatBillingMonthLabel(billingMonth)}`}
+          subtitle={`Billing, EB Mode & PNG Invoices · ${formatBillingMonthLabel(billingMonth)}`}
           onBack={onBack}
           rightSlot={
             <select
@@ -686,7 +865,7 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
             )}
           </section>
 
-          {/* Payment Status Filter Strip (No duplicate House/Floor/Unit dropdowns) */}
+          {/* Payment Status Filter Strip */}
           <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
             {(['ALL', ...ALL_STATUSES] as const).map((st) => (
               <button
@@ -704,23 +883,272 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
             ))}
           </div>
 
-          {/* Stacked Mobile-First Invoice Cards */}
+          {/* View Mode Switcher (Card vs. Table) + Export PDF Action */}
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-gray-100 bg-gray-50/80 px-3 py-2">
+            <div className="text-xs font-bold text-[#0f172a]">
+              {filteredInvoices.length} Invoice{filteredInvoices.length === 1 ? '' : 's'}
+            </div>
+
+            <div className="flex items-center gap-2">
+              <div
+                className="inline-flex rounded-xl bg-gray-200/80 p-0.5"
+                role="group"
+                aria-label="Invoice display view"
+              >
+                <button
+                  type="button"
+                  onClick={() => handleChangeViewMode('card')}
+                  aria-pressed={viewMode === 'card'}
+                  className={`inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-[11px] font-bold cursor-pointer transition-colors ${
+                    viewMode === 'card'
+                      ? 'bg-white text-[#3E8E41] shadow-2xs'
+                      : 'text-gray-600 hover:text-[#0f172a]'
+                  }`}
+                >
+                  <LayoutGrid className="w-3.5 h-3.5" />
+                  <span>Card</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleChangeViewMode('table')}
+                  aria-pressed={viewMode === 'table'}
+                  className={`inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-[11px] font-bold cursor-pointer transition-colors ${
+                    viewMode === 'table'
+                      ? 'bg-white text-[#3E8E41] shadow-2xs'
+                      : 'text-gray-600 hover:text-[#0f172a]'
+                  }`}
+                >
+                  <Table2 className="w-3.5 h-3.5" />
+                  <span>Table</span>
+                </button>
+              </div>
+
+              <button
+                type="button"
+                disabled={filteredInvoices.length === 0}
+                onClick={() => {
+                  const selectedHouseName =
+                    selectedPropertyId === 'ALL'
+                      ? 'All Houses'
+                      : properties.find((p) => p.property_id === selectedPropertyId)
+                          ?.property_name || selectedPropertyId;
+                  const summaryParts = [
+                    `Month: ${formatBillingMonthLabel(billingMonth)}`,
+                    `House: ${selectedHouseName}`,
+                    floorFilter !== 'ALL' ? `Floor: ${floorFilter}` : null,
+                    unitFilter !== 'ALL'
+                      ? `Unit: ${
+                          units.find((u) => u.unit_id === unitFilter)?.unit_name ||
+                          unitFilter
+                        }`
+                      : null,
+                    statusFilter !== 'ALL' ? `Status: ${statusFilter}` : null,
+                  ].filter(Boolean);
+
+                  exportInvoicesSummaryPdf({
+                    invoices: filteredInvoices,
+                    filterSummary: summaryParts.join('  |  '),
+                    fileName: `SRKP-Invoices-${billingMonth}.pdf`,
+                  });
+                }}
+                className="inline-flex items-center gap-1.5 rounded-xl bg-[#0f172a] px-3 py-1.5 text-[11px] font-bold text-white hover:bg-slate-800 disabled:opacity-45 disabled:cursor-not-allowed cursor-pointer min-h-[34px]"
+              >
+                <FileDown className="w-3.5 h-3.5 text-emerald-300" />
+                <span>Export PDF</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Invoice List: Card View or Compact Tabular View */}
           {filteredInvoices.length === 0 ? (
             <div className="rounded-2xl border border-gray-100 bg-gray-50 p-8 text-center text-xs text-gray-500">
               No invoices found for the selected House, Floor/Unit, Month, and Payment Status.
             </div>
+          ) : viewMode === 'table' ? (
+            <div className="rounded-2xl border border-gray-200 bg-white shadow-xs overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[1080px] border-collapse text-left text-xs">
+                  <thead>
+                    <tr className="bg-[#3E8E41] text-white text-[11px] font-bold">
+                      <th className="py-2.5 px-3 whitespace-nowrap">Unit / Tenant</th>
+                      <th className="py-2.5 px-3 whitespace-nowrap">Month &amp; Year</th>
+                      <th className="py-2.5 px-3 text-right whitespace-nowrap">Rent</th>
+                      <th className="py-2.5 px-3 text-right whitespace-nowrap">Water</th>
+                      <th className="py-2.5 px-3 text-right whitespace-nowrap">Maintenance</th>
+                      <th className="py-2.5 px-3 text-right whitespace-nowrap">Motor</th>
+                      <th className="py-2.5 px-3 text-right whitespace-nowrap">Others</th>
+                      <th className="py-2.5 px-3 text-right whitespace-nowrap">Total Amount</th>
+                      <th className="py-2.5 px-3 text-right whitespace-nowrap">
+                        KEB (BESCOM) Bill
+                      </th>
+                      <th className="py-2.5 px-3 whitespace-nowrap">Paid Date / Status</th>
+                      <th className="py-2.5 px-3 text-right whitespace-nowrap">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {filteredInvoices.map((inv) => {
+                      const b = getInvoiceBreakdown(inv);
+                      return (
+                        <tr
+                          key={inv.id}
+                          className="hover:bg-emerald-50/35 transition-colors align-middle"
+                        >
+                          <td className="py-2.5 px-3">
+                            <div className="font-bold text-[#0f172a] whitespace-nowrap">
+                              {inv.unit_name} ({inv.floor})
+                            </div>
+                            <div className="text-[11px] text-gray-600 truncate max-w-[170px]">
+                              {inv.tenant_name}
+                            </div>
+                            <div className="text-[10px] text-[#3E8E41] truncate max-w-[170px]">
+                              {inv.property_name}
+                            </div>
+                          </td>
+                          <td className="py-2.5 px-3 whitespace-nowrap font-medium text-gray-700">
+                            {formatBillingMonthLabel(inv.billing_month)}
+                          </td>
+                          <td className="py-2.5 px-3 text-right font-mono tabular-nums whitespace-nowrap text-[#0f172a]">
+                            {formatINR(b.rent)}
+                          </td>
+                          <td className="py-2.5 px-3 text-right font-mono tabular-nums whitespace-nowrap text-[#0f172a]">
+                            {formatINR(b.water)}
+                          </td>
+                          <td className="py-2.5 px-3 text-right font-mono tabular-nums whitespace-nowrap text-[#0f172a]">
+                            {formatINR(b.cleaning)}
+                          </td>
+                          <td className="py-2.5 px-3 text-right font-mono tabular-nums whitespace-nowrap text-[#0f172a]">
+                            {formatINR(b.motor)}
+                          </td>
+                          <td className="py-2.5 px-3 text-right font-mono tabular-nums whitespace-nowrap text-[#0f172a]">
+                            {formatINR(b.others)}
+                          </td>
+                          <td className="py-2.5 px-3 text-right font-mono tabular-nums whitespace-nowrap font-extrabold text-[#3E8E41]">
+                            {formatINR(b.totalAmount)}
+                          </td>
+                          <td className="py-2.5 px-3 text-right whitespace-nowrap">
+                            <div className="font-mono tabular-nums font-semibold text-[#0f172a]">
+                              {formatINR(b.eb)}
+                            </div>
+                            <span
+                              className={`mt-0.5 inline-block rounded px-1.5 py-0.5 text-[10px] font-bold ${
+                                inv.eb_paid_to_owner
+                                  ? 'bg-emerald-50 text-[#3E8E41]'
+                                  : 'bg-gray-100 text-gray-700'
+                              }`}
+                            >
+                              {b.ebModeLabel}
+                            </span>
+                          </td>
+                          <td className="py-2.5 px-3 whitespace-nowrap">
+                            <span
+                              className={`inline-flex items-center gap-1 rounded-lg border px-2 py-0.5 text-[10px] font-bold ${getStatusBadgeClasses(
+                                inv.payment_status
+                              )}`}
+                            >
+                              {inv.is_locked ? (
+                                <Lock className="w-2.5 h-2.5" />
+                              ) : (
+                                <Clock className="w-2.5 h-2.5" />
+                              )}
+                              <span>{inv.payment_status}</span>
+                            </span>
+                            <div className="mt-1 text-[10px] font-mono text-gray-500">
+                              {b.paidDateLabel ? `Paid: ${b.paidDateLabel}` : 'Not Paid'}
+                            </div>
+                          </td>
+                          <td className="py-2.5 px-3 text-right whitespace-nowrap">
+                            <div className="inline-flex items-center justify-end gap-1.5">
+                              {!isReadOnly && (
+                                <button
+                                  type="button"
+                                  disabled={inv.is_locked}
+                                  onClick={() => openEditStatusModal(inv)}
+                                  className="inline-flex items-center gap-1 rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-[11px] font-bold text-[#0f172a] hover:bg-gray-50 disabled:opacity-45 disabled:cursor-not-allowed cursor-pointer"
+                                >
+                                  {inv.is_locked ? (
+                                    <Lock className="w-3 h-3 text-gray-400" />
+                                  ) : (
+                                    <Pencil className="w-3 h-3 text-[#489E44]" />
+                                  )}
+                                  <span>{inv.is_locked ? 'Locked' : 'Update Status'}</span>
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                onClick={() => openShareImageModal(inv)}
+                                className="inline-flex items-center gap-1 rounded-lg bg-[#489E44] px-2.5 py-1.5 text-[11px] font-bold text-white hover:bg-[#3E8E41] cursor-pointer"
+                              >
+                                <ImageIcon className="w-3 h-3" />
+                                <span>Share PNG</span>
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                  <tfoot>
+                    {(() => {
+                      const totals = filteredInvoices.reduce(
+                        (acc, inv) => {
+                          const b = getInvoiceBreakdown(inv);
+                          acc.rent += b.rent;
+                          acc.water += b.water;
+                          acc.cleaning += b.cleaning;
+                          acc.motor += b.motor;
+                          acc.others += b.others;
+                          acc.totalAmount += b.totalAmount;
+                          acc.eb += b.eb;
+                          return acc;
+                        },
+                        {
+                          rent: 0,
+                          water: 0,
+                          cleaning: 0,
+                          motor: 0,
+                          others: 0,
+                          totalAmount: 0,
+                          eb: 0,
+                        }
+                      );
+                      return (
+                        <tr className="bg-emerald-50/90 border-t-2 border-[#3E8E41]/30 font-extrabold text-[#0f172a]">
+                          <td className="py-2.5 px-3 whitespace-nowrap" colSpan={2}>
+                            TOTAL ({filteredInvoices.length})
+                          </td>
+                          <td className="py-2.5 px-3 text-right font-mono tabular-nums whitespace-nowrap">
+                            {formatINR(totals.rent)}
+                          </td>
+                          <td className="py-2.5 px-3 text-right font-mono tabular-nums whitespace-nowrap">
+                            {formatINR(totals.water)}
+                          </td>
+                          <td className="py-2.5 px-3 text-right font-mono tabular-nums whitespace-nowrap">
+                            {formatINR(totals.cleaning)}
+                          </td>
+                          <td className="py-2.5 px-3 text-right font-mono tabular-nums whitespace-nowrap">
+                            {formatINR(totals.motor)}
+                          </td>
+                          <td className="py-2.5 px-3 text-right font-mono tabular-nums whitespace-nowrap">
+                            {formatINR(totals.others)}
+                          </td>
+                          <td className="py-2.5 px-3 text-right font-mono tabular-nums whitespace-nowrap text-[#3E8E41]">
+                            {formatINR(totals.totalAmount)}
+                          </td>
+                          <td className="py-2.5 px-3 text-right font-mono tabular-nums whitespace-nowrap">
+                            {formatINR(totals.eb)}
+                          </td>
+                          <td className="py-2.5 px-3" colSpan={2} />
+                        </tr>
+                      );
+                    })()}
+                  </tfoot>
+                </table>
+              </div>
+            </div>
           ) : (
             <div className="space-y-3">
               {filteredInvoices.map((inv) => {
-                const waText = formatWhatsAppInvoiceMessage(
-                  inv,
-                  settings.merchant_upi_id,
-                  senderSignature
-                );
-                const waHref = `https://wa.me/${normalizeWhatsAppDigits(
-                  inv.whatsapp_phone
-                )}?text=${encodeURIComponent(waText)}`;
-
+                const b = getInvoiceBreakdown(inv);
                 return (
                   <article
                     key={inv.id}
@@ -798,32 +1226,15 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
                             {formatINR(inv.eb_amount)}
                           </div>
                         </div>
-                        <div className="inline-flex rounded-lg bg-gray-200/80 p-0.5">
-                          <button
-                            type="button"
-                            disabled={inv.is_locked || isReadOnly}
-                            onClick={() => handleToggleEbCollectionMode(inv, true)}
-                            className={`px-2 py-1 text-[10px] font-bold rounded-md cursor-pointer disabled:cursor-not-allowed ${
-                              inv.eb_paid_to_owner
-                                ? 'bg-white text-[#3E8E41] shadow-2xs'
-                                : 'text-gray-600'
-                            }`}
-                          >
-                            EB: Owner
-                          </button>
-                          <button
-                            type="button"
-                            disabled={inv.is_locked || isReadOnly}
-                            onClick={() => handleToggleEbCollectionMode(inv, false)}
-                            className={`px-2 py-1 text-[10px] font-bold rounded-md cursor-pointer disabled:cursor-not-allowed ${
-                              !inv.eb_paid_to_owner
-                                ? 'bg-white text-[#0f172a] shadow-2xs'
-                                : 'text-gray-600'
-                            }`}
-                          >
-                            EB: Direct
-                          </button>
-                        </div>
+                        <span
+                          className={`inline-flex items-center rounded-lg border px-2 py-1 text-[10px] font-bold ${
+                            inv.eb_paid_to_owner
+                              ? 'border-emerald-200 bg-emerald-50 text-[#3E8E41]'
+                              : 'border-gray-200 bg-white text-gray-700'
+                          }`}
+                        >
+                          EB: {b.ebModeLabel}
+                        </span>
                       </div>
                     </div>
 
@@ -887,17 +1298,14 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
                         <span>Print</span>
                       </button>
 
-                      {!isReadOnly && (
-                        <a
-                          href={waHref}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-[#489E44] px-3 py-2 text-xs font-bold text-white hover:bg-[#3E8E41] min-h-[38px]"
-                        >
-                          <MessageSquare className="w-3.5 h-3.5" />
-                          <span>WhatsApp</span>
-                        </a>
-                      )}
+                      <button
+                        type="button"
+                        onClick={() => openShareImageModal(inv)}
+                        className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-[#489E44] px-3 py-2 text-xs font-bold text-white hover:bg-[#3E8E41] cursor-pointer min-h-[38px]"
+                      >
+                        <ImageIcon className="w-3.5 h-3.5" />
+                        <span>Share PNG</span>
+                      </button>
                     </div>
                   </article>
                 );
@@ -1019,6 +1427,77 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
                   />
                 </div>
               )}
+
+              {editStatus !== 'Unpaid' && (
+                <div>
+                  <label className="block text-xs font-semibold text-gray-700 mb-1">
+                    Paid Date (Shown on PNG Invoice)
+                  </label>
+                  <input
+                    type="date"
+                    value={editPaidDate}
+                    onChange={(e) => setEditPaidDate(e.target.value)}
+                    className="w-full rounded-xl border border-gray-200 px-3.5 py-2 text-sm font-mono text-[#0f172a] min-h-[42px]"
+                  />
+                </div>
+              )}
+
+              {/* Invoice Image Breakdown Overrides */}
+              <div className="rounded-xl border border-gray-200 bg-gray-50/80 p-3 space-y-2.5">
+                <div className="text-xs font-bold text-[#0f172a]">
+                  Invoice Image Breakdown Details
+                </div>
+                <div className="grid grid-cols-2 gap-2.5">
+                  <div>
+                    <label className="block text-[11px] font-semibold text-gray-600 mb-1">
+                      Motor Bill (INR)
+                    </label>
+                    <input
+                      type="number"
+                      min={0}
+                      value={editMotorBill}
+                      onChange={(e) => setEditMotorBill(e.target.value)}
+                      className="w-full rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-xs font-mono font-bold text-[#0f172a] min-h-[38px]"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-semibold text-gray-600 mb-1">
+                      Others (INR)
+                    </label>
+                    <input
+                      type="number"
+                      min={0}
+                      value={editOthersAmount}
+                      onChange={(e) => setEditOthersAmount(e.target.value)}
+                      className="w-full rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-xs font-mono font-bold text-[#0f172a] min-h-[38px]"
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-[11px] font-semibold text-gray-600 mb-1">
+                    KEB Acc ID
+                  </label>
+                  <input
+                    type="text"
+                    value={editKebAccountId}
+                    onChange={(e) => setEditKebAccountId(e.target.value)}
+                    placeholder="e.g., 7732158000"
+                    className="w-full rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-xs font-mono text-[#0f172a] min-h-[38px]"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-semibold text-gray-600 mb-1">
+                    Water Bill Meter Reference
+                  </label>
+                  <input
+                    type="text"
+                    value={editWaterReference}
+                    onChange={(e) => setEditWaterReference(e.target.value)}
+                    placeholder="e.g., (836436-06/20)(1207398-05/22)"
+                    className="w-full rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-xs font-mono text-[#0f172a] min-h-[38px]"
+                  />
+                </div>
+              </div>
 
               {/* Live Totals Summary */}
               <div className="rounded-xl border border-gray-200 bg-gray-50 p-3.5 space-y-1.5 text-xs">
@@ -1270,74 +1749,112 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
                 )}
               </div>
 
-              {/* Dynamic UPI QR & Dispatch Buttons */}
-              <div className="flex flex-col items-center rounded-xl border border-gray-200 bg-gray-50 p-4 text-center space-y-3">
-                <div className="text-xs font-bold text-gray-700">
-                  Pay Owner via UPI
-                </div>
-                <div className="rounded-xl bg-white p-3 border border-gray-200">
-                  <QRCodeSVG
-                    value={activeModalInvoice.upi_link}
-                    size={136}
-                    bgColor="#ffffff"
-                    fgColor="#0f172a"
-                  />
-                </div>
-                <div className="text-xs font-mono text-gray-600">
-                  {settings.merchant_upi_id}
-                </div>
+              {/* Non-Editable Image Share & Print Actions */}
+              <div className="rounded-xl border border-gray-200 bg-gray-50 p-3.5 space-y-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const target = activeModalInvoice;
+                    setViewingInvoiceId(null);
+                    openShareImageModal(target);
+                  }}
+                  className="w-full inline-flex items-center justify-center gap-1.5 rounded-xl bg-[#489E44] px-3 py-2.5 text-xs font-bold text-white hover:bg-[#3E8E41] cursor-pointer min-h-[42px]"
+                >
+                  <ImageIcon className="w-4 h-4" />
+                  <span>Generate &amp; Share PNG Invoice</span>
+                </button>
 
-                <div className="w-full space-y-2 pt-1">
-                  <button
-                    type="button"
-                    onClick={() => triggerPrint(activeModalInvoice.id)}
-                    className="w-full inline-flex items-center justify-center gap-1.5 rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs font-bold text-[#0f172a] hover:bg-gray-50 cursor-pointer min-h-[40px]"
-                  >
-                    <Printer className="w-3.5 h-3.5" />
-                    <span>Print Invoice</span>
-                  </button>
-
-                  {!isReadOnly && (
-                    <>
-                      <a
-                        href={`https://wa.me/${normalizeWhatsAppDigits(
-                          activeModalInvoice.whatsapp_phone
-                        )}?text=${encodeURIComponent(
-                          formatWhatsAppInvoiceMessage(
-                            activeModalInvoice,
-                            settings.merchant_upi_id,
-                            senderSignature
-                          )
-                        )}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="w-full inline-flex items-center justify-center gap-1.5 rounded-xl bg-[#489E44] px-3 py-2 text-xs font-bold text-white hover:bg-[#3E8E41] min-h-[40px]"
-                      >
-                        <MessageSquare className="w-3.5 h-3.5" />
-                        <span>Send via WhatsApp</span>
-                      </a>
-
-                      <button
-                        type="button"
-                        onClick={() => copyWhatsAppText(activeModalInvoice)}
-                        className="w-full inline-flex items-center justify-center gap-1.5 rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs font-bold text-gray-700 hover:bg-gray-50 cursor-pointer min-h-[40px]"
-                      >
-                        {copiedKey === activeModalInvoice.id ? (
-                          <>
-                            <Check className="w-3.5 h-3.5 text-[#489E44]" />
-                            <span>Message Copied</span>
-                          </>
-                        ) : (
-                          <>
-                            <Copy className="w-3.5 h-3.5" />
-                            <span>Copy WhatsApp Text</span>
-                          </>
-                        )}
-                      </button>
-                    </>
-                  )}
-                </div>
+                <button
+                  type="button"
+                  onClick={() => triggerPrint(activeModalInvoice.id)}
+                  className="w-full inline-flex items-center justify-center gap-1.5 rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs font-bold text-[#0f172a] hover:bg-gray-50 cursor-pointer min-h-[40px]"
+                >
+                  <Printer className="w-3.5 h-3.5" />
+                  <span>Print Invoice</span>
+                </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Non-Editable PNG Invoice Preview, Download & Share Modal */}
+      {sharingInvoice && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-[#0f172a]/60 backdrop-blur-xs p-2 sm:p-4 print:hidden"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="png-invoice-modal-title"
+        >
+          <div className="w-[95vw] max-w-lg max-h-[92vh] overflow-y-auto rounded-2xl border border-gray-200 bg-white p-4 sm:p-5 shadow-2xl space-y-4">
+            <div className="flex items-start justify-between gap-3 pb-3 border-b border-gray-100">
+              <div className="min-w-0">
+                <div className="text-xs font-mono font-semibold text-[#3E8E41]">
+                  {sharingInvoice.id} · Non-Editable PNG Statement
+                </div>
+                <h3
+                  id="png-invoice-modal-title"
+                  className="text-base font-bold text-[#0f172a] mt-0.5 truncate"
+                >
+                  {sharingInvoice.tenant_name} — {formatBillingMonthLabel(sharingInvoice.billing_month)}
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSharingInvoiceId(null)}
+                className="p-1.5 rounded-lg text-gray-400 hover:bg-gray-100 cursor-pointer shrink-0"
+                aria-label="Close invoice image preview"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="overflow-x-auto rounded-xl border border-gray-200 bg-gray-50 p-3 flex justify-center">
+              <div
+                ref={invoiceCaptureRef}
+                style={{
+                  backgroundColor: '#FFFFFF',
+                  color: '#000000',
+                  display: 'inline-block',
+                  padding: '8px',
+                }}
+              >
+                <InvoiceImageTemplate
+                  invoice={sharingInvoice}
+                  ebAccountFallback={sharingUnit?.eb_rr_number || ''}
+                  waterRr1Fallback={sharingUnit?.water_rr_number || ''}
+                  waterRr2Fallback={sharingUnit?.water_rr_number2 || ''}
+                />
+              </div>
+            </div>
+
+            {shareFeedback && (
+              <div className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3.5 py-2.5 text-xs font-semibold text-[#3E8E41]">
+                <CheckCircle2 className="w-4 h-4 text-[#489E44] shrink-0" />
+                <span>{shareFeedback}</span>
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              <button
+                type="button"
+                disabled={isGeneratingImage}
+                onClick={() => void handleShareInvoicePng()}
+                className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-[#489E44] px-4 py-2.5 text-xs font-bold text-white hover:bg-[#3E8E41] disabled:opacity-60 cursor-pointer min-h-[44px]"
+              >
+                <Share2 className="w-4 h-4" />
+                <span>{isGeneratingImage ? 'Generating...' : 'Share Image (WhatsApp)'}</span>
+              </button>
+
+              <button
+                type="button"
+                disabled={isGeneratingImage}
+                onClick={() => void handleDownloadInvoicePng()}
+                className="w-full inline-flex items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-xs font-bold text-[#0f172a] hover:bg-gray-50 disabled:opacity-60 cursor-pointer min-h-[44px]"
+              >
+                <Download className="w-4 h-4 text-[#489E44]" />
+                <span>Download PNG</span>
+              </button>
             </div>
           </div>
         </div>
@@ -1517,7 +2034,7 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
           </table>
 
           <div className="mt-6 text-xs text-slate-600 flex justify-between items-center">
-            <div>UPI Payment ID: {settings.merchant_upi_id}</div>
+            <div>Owner Contact: {settings.owner_whatsapp_phone || settings.merchant_name}</div>
             <div>
               Generated:{' '}
               {new Date(printableInvoice.generated_at).toLocaleDateString('en-IN')}

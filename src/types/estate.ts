@@ -140,16 +140,19 @@ export interface InvoiceRecord {
   balance_due: number;
   payment_status: PaymentStatus;
   is_locked: boolean; // True when 'Partially Paid & Closed' or 'Paid & Closed'
-  upi_link: string;
+  keb_account_id?: string;
+  water_reference?: string;
+  motor_bill_amount?: number;
+  others_amount?: number;
   due_date?: string;
   generated_at: string;
   paid_at: string | null;
   closed_at: string | null;
 }
 
-export type AccessType = 'admin' | 'viewer' | 'tenant';
+export type AccessType = 'admin' | 'viewer';
 export type AccountAccessStatus = 'active' | 'revoked';
-export type UserRole = 'Admin' | 'Viewer' | 'Tenant';
+export type UserRole = 'Admin' | 'Viewer';
 
 export interface AppUserAccount {
   user_id: string;
@@ -158,9 +161,6 @@ export interface AppUserAccount {
   mobile_number: string;
   access_type: AccessType;
   access_status: AccountAccessStatus;
-  must_reset_password: boolean;
-  tenant_id?: string | null;
-  unit_id?: string | null;
   password_salt?: string;
   password_hash?: string;
   created_at: string;
@@ -174,9 +174,6 @@ export interface AuthSession {
   mobileNumber: string;
   accessType: AccessType;
   accessStatus: AccountAccessStatus;
-  mustResetPassword: boolean;
-  tenantId?: string | null;
-  unitId?: string | null;
   authToken?: string;
   role: UserRole;
   username: string;
@@ -197,7 +194,6 @@ export interface RoleCredentialsConfig {
 export type AutoLockTimerMode = 'immediate' | '5m' | '15m' | '30m';
 
 export interface AppSettings {
-  merchant_upi_id: string;
   merchant_name: string;
   owner_whatsapp_phone: string;
   last_synced_at: string | null;

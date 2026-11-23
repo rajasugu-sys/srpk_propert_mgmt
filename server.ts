@@ -23,8 +23,6 @@ import type {
   AppUserAccount,
   AuthSession,
   EstateDataset,
-  MaintenanceRequest,
-  RequestCategory,
   UserRole,
 } from './src/types/estate.ts';
 
@@ -130,9 +128,7 @@ function normalizeMobile(raw: string): string {
 }
 
 function toUserRole(accessType: AccessType): UserRole {
-  if (accessType === 'admin') return 'Admin';
-  if (accessType === 'viewer') return 'Viewer';
-  return 'Tenant';
+  return accessType === 'admin' ? 'Admin' : 'Viewer';
 }
 
 interface AuthTokenPayload {
@@ -216,9 +212,6 @@ function buildAuthSession(
     mobileNumber: user.mobile_number,
     accessType: user.access_type,
     accessStatus: user.access_status,
-    mustResetPassword: Boolean(user.must_reset_password),
-    tenantId: user.tenant_id || null,
-    unitId: user.unit_id || null,
     authToken,
     role: toUserRole(user.access_type),
     username: user.user_id,
@@ -247,9 +240,6 @@ function createInitialAdminUsers(): AppUserAccount[] {
       mobile_number: '9845011223',
       access_type: 'admin',
       access_status: 'active',
-      must_reset_password: false,
-      tenant_id: null,
-      unit_id: null,
       password_salt: h1.salt,
       password_hash: h1.hash,
       created_at: now,
@@ -262,9 +252,6 @@ function createInitialAdminUsers(): AppUserAccount[] {
       mobile_number: '9845011224',
       access_type: 'admin',
       access_status: 'active',
-      must_reset_password: false,
-      tenant_id: null,
-      unit_id: null,
       password_salt: h2.salt,
       password_hash: h2.hash,
       created_at: now,
@@ -275,8 +262,7 @@ function createInitialAdminUsers(): AppUserAccount[] {
 
 function normalizeUserRecord(raw: Record<string, unknown>): AppUserAccount {
   const rawType = String(raw.access_type || 'viewer').toLowerCase();
-  const access_type: AccessType =
-    rawType === 'admin' || rawType === 'tenant' ? rawType : 'viewer';
+  const access_type: AccessType = rawType === 'admin' ? 'admin' : 'viewer';
   const rawStatus = String(raw.access_status || 'active').toLowerCase();
   const access_status: AccountAccessStatus =
     rawStatus === 'revoked' ? 'revoked' : 'active';
@@ -288,10 +274,6 @@ function normalizeUserRecord(raw: Record<string, unknown>): AppUserAccount {
     mobile_number: String(raw.mobile_number || '').trim(),
     access_type,
     access_status,
-    must_reset_password:
-      raw.must_reset_password === true || raw.must_reset_password === 'true',
-    tenant_id: raw.tenant_id ? String(raw.tenant_id).trim() : null,
-    unit_id: raw.unit_id ? String(raw.unit_id).trim() : null,
     password_salt: raw.password_salt ? String(raw.password_salt) : '',
     password_hash: raw.password_hash ? String(raw.password_hash) : '',
     created_at: String(raw.created_at || new Date().toISOString()),
@@ -397,9 +379,6 @@ function sanitizeUserForClient(u: AppUserAccount): AppUserAccount {
     mobile_number: u.mobile_number,
     access_type: u.access_type,
     access_status: u.access_status,
-    must_reset_password: Boolean(u.must_reset_password),
-    tenant_id: u.tenant_id || null,
-    unit_id: u.unit_id || null,
     created_at: u.created_at,
     updated_at: u.updated_at,
   };
@@ -571,8 +550,7 @@ async function startServer() {
       if (user.access_status === 'revoked') {
         res.status(403).json({
           ok: false,
-          error:
-            'Your Tenant Portal access has been revoked following move-out. Please contact the house owner if you need past records.',
+          error: 'This account access has been revoked. Please contact an administrator.',
         });
         return;
       }
@@ -627,15 +605,6 @@ async function startServer() {
       const cleanMobile = normalizeMobile(mobileNumber || '');
       const cleanPassword = String(password || '').trim();
       const cleanAccessType = String(accessType || '').trim().toLowerCase();
-
-      if (cleanAccessType === 'tenant') {
-        res.status(403).json({
-          ok: false,
-          error:
-            'Tenant accounts cannot self-register. Tenants receive portal login details from the house owner upon onboarding.',
-        });
-        return;
-      }
 
       if (cleanAccessType !== 'admin' && cleanAccessType !== 'viewer') {
         res.status(400).json({
@@ -723,9 +692,6 @@ async function startServer() {
         mobile_number: cleanMobile,
         access_type: cleanAccessType as AccessType,
         access_status: 'active',
-        must_reset_password: false,
-        tenant_id: null,
-        unit_id: null,
         password_salt: salt,
         password_hash: hash,
         created_at: now,
@@ -801,7 +767,6 @@ async function startServer() {
               ...u,
               password_salt: salt,
               password_hash: hash,
-              must_reset_password: false,
               updated_at: now,
             }
           : u
@@ -819,51 +784,6 @@ async function startServer() {
       res.status(500).json({
         ok: false,
         error: err instanceof Error ? err.message : 'Password reset failed.',
-      });
-    }
-  });
-
-  app.post('/api/auth/force-reset-password', async (req: Request, res: Response) => {
-    const auth = await requireAuthSession(req, res);
-    if (!auth) return;
-
-    try {
-      const { newPassword } = req.body as { newPassword?: string };
-      const cleanPassword = String(newPassword || '').trim();
-      if (cleanPassword.length < 4) {
-        res.status(400).json({
-          ok: false,
-          error: 'New password must be at least 4 characters.',
-        });
-        return;
-      }
-
-      const { salt, hash } = hashPassword(cleanPassword);
-      const now = new Date().toISOString();
-      let updatedUser: AppUserAccount = {
-        ...auth.user,
-        password_salt: salt,
-        password_hash: hash,
-        must_reset_password: false,
-        updated_at: now,
-      };
-
-      const nextUsers = (auth.dataset.users || []).map((u) =>
-        u.user_id.toLowerCase() === auth.user.user_id.toLowerCase() ? updatedUser : u
-      );
-      const nextDataset: EstateDataset = { ...auth.dataset, users: nextUsers };
-      await persistEstateDataset(nextDataset);
-      void syncUsersAndConfigToSheets(nextDataset);
-
-      const token = await signAuthToken(updatedUser);
-      res.json({
-        ok: true,
-        session: buildAuthSession(updatedUser, 'password', token),
-      });
-    } catch (err) {
-      res.status(500).json({
-        ok: false,
-        error: err instanceof Error ? err.message : 'Could not set new password.',
       });
     }
   });
@@ -908,7 +828,6 @@ async function startServer() {
         ...auth.user,
         password_salt: salt,
         password_hash: hash,
-        must_reset_password: false,
         updated_at: now,
       };
 
@@ -955,8 +874,7 @@ async function startServer() {
       if (user.access_status === 'revoked') {
         res.status(403).json({
           ok: false,
-          error:
-            'Your Tenant Portal access has been revoked following move-out.',
+          error: 'This account access has been revoked.',
         });
         return;
       }
@@ -970,127 +888,6 @@ async function startServer() {
       res.status(500).json({
         ok: false,
         error: err instanceof Error ? err.message : 'Biometric sign-in failed.',
-      });
-    }
-  });
-
-  app.post('/api/auth/tenant-provision', async (req: Request, res: Response) => {
-    const auth = await requireAuthSession(req, res, ['admin']);
-    if (!auth) return;
-
-    try {
-      const { tenantId, unitId, fullName, mobileNumber, oneTimePassword } = req.body as {
-        tenantId?: string;
-        unitId?: string;
-        fullName?: string;
-        mobileNumber?: string;
-        oneTimePassword?: string;
-      };
-
-      const cleanMobile = normalizeMobile(mobileNumber || '');
-      const cleanName = String(fullName || '').trim();
-      const cleanTenantId = String(tenantId || '').trim();
-      const cleanUnitId = String(unitId || '').trim();
-      const cleanOtp = String(oneTimePassword || '').trim();
-
-      if (!cleanTenantId || !cleanName || cleanMobile.length < 10 || cleanOtp.length < 4) {
-        res.status(400).json({
-          ok: false,
-          error:
-            'Tenant ID, Full Name, 10-digit Mobile Number, and One-Time Password (min 4 chars) are required.',
-        });
-        return;
-      }
-
-      const { salt, hash } = hashPassword(cleanOtp);
-      const now = new Date().toISOString();
-      const existingUsers = auth.dataset.users || [];
-
-      const existingIdx = existingUsers.findIndex(
-        (u) =>
-          u.access_type === 'tenant' &&
-          (u.tenant_id === cleanTenantId ||
-            u.user_id === cleanMobile ||
-            normalizeMobile(u.mobile_number) === cleanMobile)
-      );
-
-      const tenantUser: AppUserAccount = {
-        user_id: cleanMobile,
-        full_name: cleanName,
-        email: '',
-        mobile_number: cleanMobile,
-        access_type: 'tenant',
-        access_status: 'active',
-        must_reset_password: true,
-        tenant_id: cleanTenantId,
-        unit_id: cleanUnitId || null,
-        password_salt: salt,
-        password_hash: hash,
-        created_at:
-          existingIdx >= 0 ? existingUsers[existingIdx].created_at : now,
-        updated_at: now,
-      };
-
-      const nextUsers =
-        existingIdx >= 0
-          ? existingUsers.map((u, idx) => (idx === existingIdx ? tenantUser : u))
-          : [...existingUsers, tenantUser];
-
-      const nextDataset: EstateDataset = { ...auth.dataset, users: nextUsers };
-      await persistEstateDataset(nextDataset);
-      void syncUsersAndConfigToSheets(nextDataset);
-
-      res.json({
-        ok: true,
-        user: sanitizeUserForClient(tenantUser),
-      });
-    } catch (err) {
-      res.status(500).json({
-        ok: false,
-        error: err instanceof Error ? err.message : 'Failed provisioning tenant account.',
-      });
-    }
-  });
-
-  app.post('/api/auth/tenant-revoke', async (req: Request, res: Response) => {
-    const auth = await requireAuthSession(req, res, ['admin']);
-    if (!auth) return;
-
-    try {
-      const { tenantId, mobileNumber } = req.body as {
-        tenantId?: string;
-        mobileNumber?: string;
-      };
-      const cleanTenantId = String(tenantId || '').trim();
-      const cleanMobile = normalizeMobile(mobileNumber || '');
-
-      const now = new Date().toISOString();
-      let revokedCount = 0;
-      const nextUsers = (auth.dataset.users || []).map((u) => {
-        if (
-          u.access_type === 'tenant' &&
-          ((cleanTenantId && u.tenant_id === cleanTenantId) ||
-            (cleanMobile.length >= 10 && normalizeMobile(u.mobile_number) === cleanMobile))
-        ) {
-          revokedCount += 1;
-          return {
-            ...u,
-            access_status: 'revoked' as const,
-            updated_at: now,
-          };
-        }
-        return u;
-      });
-
-      const nextDataset: EstateDataset = { ...auth.dataset, users: nextUsers };
-      await persistEstateDataset(nextDataset);
-      void syncUsersAndConfigToSheets(nextDataset);
-
-      res.json({ ok: true, revokedCount });
-    } catch (err) {
-      res.status(500).json({
-        ok: false,
-        error: err instanceof Error ? err.message : 'Failed revoking tenant account.',
       });
     }
   });
@@ -1157,45 +954,6 @@ async function startServer() {
 
     try {
       const { dataset, user } = auth;
-
-      if (user.access_type === 'tenant') {
-        const tenant =
-          dataset.tenants.find((t) => t.id === user.tenant_id) ||
-          dataset.tenants.find(
-            (t) => normalizeMobile(t.whatsapp_phone) === normalizeMobile(user.mobile_number)
-          );
-        const scopedTenantId = tenant?.id || user.tenant_id || '';
-        const scopedUnitId = tenant?.unit_id || user.unit_id || '';
-        const scopedPropertyId = tenant?.property_id || '';
-
-        const scopedDataset: EstateDataset = {
-          properties: dataset.properties.filter(
-            (p) => p.property_id === scopedPropertyId
-          ),
-          units: dataset.units.filter((u) => u.unit_id === scopedUnitId),
-          tenants: tenant ? [tenant] : [],
-          houseMaintenanceBills: [],
-          utilityReadings: dataset.utilityReadings.filter(
-            (r) => r.unit_id === scopedUnitId
-          ),
-          invoices: dataset.invoices.filter(
-            (inv) =>
-              inv.tenant_id === scopedTenantId || inv.unit_id === scopedUnitId
-          ),
-          expenses: [],
-          requests: [],
-          users: [sanitizeUserForClient(user)],
-          settings: {
-            merchant_upi_id: dataset.settings.merchant_upi_id,
-            merchant_name: dataset.settings.merchant_name,
-            owner_whatsapp_phone: dataset.settings.owner_whatsapp_phone,
-            last_synced_at: dataset.settings.last_synced_at,
-            auto_lock_timer: dataset.settings.auto_lock_timer,
-          },
-        };
-        res.json({ exists: true, data: scopedDataset });
-        return;
-      }
 
       const safeSettings =
         user.access_type === 'admin'
@@ -1272,146 +1030,7 @@ async function startServer() {
     }
   });
 
-  // 1a. Shareable Tenant Portal Read (Non-secret view) & Requests
-  app.get('/api/portal/tenant/:tenantId', async (req: Request, res: Response) => {
-    try {
-      const tenantId = String(req.params.tenantId || '').trim();
-      const dataset = await readOrSeedEstateDataset();
-
-      const tenant = dataset.tenants.find((t) => t.id === tenantId);
-      if (!tenant) {
-        res.status(404).json({ error: 'Tenant portal record not found.' });
-        return;
-      }
-
-      const property =
-        dataset.properties.find((p) => p.property_id === tenant.property_id) || null;
-      const unit = dataset.units.find((u) => u.unit_id === tenant.unit_id) || null;
-      const invoices = dataset.invoices
-        .filter((inv) => inv.tenant_id === tenant.id)
-        .sort((a, b) => b.billing_month.localeCompare(a.billing_month));
-      const requests = (dataset.requests || [])
-        .filter((r) => r.tenant_id === tenant.id || r.unit_id === tenant.unit_id)
-        .sort((a, b) => b.created_at.localeCompare(a.created_at));
-
-      res.json({
-        ok: true,
-        tenant: {
-          id: tenant.id,
-          property_id: tenant.property_id,
-          unit_id: tenant.unit_id,
-          full_name: tenant.full_name,
-          whatsapp_phone: tenant.whatsapp_phone,
-          move_in_date: tenant.move_in_date,
-          lease_end_date: tenant.lease_end_date,
-          lease_type: tenant.lease_type,
-          monthly_rent: tenant.monthly_rent,
-          monthly_maintenance_charge: tenant.monthly_maintenance_charge,
-          water_charge: tenant.water_charge,
-          is_active: tenant.is_active,
-        },
-        property,
-        unit,
-        invoices,
-        requests,
-        paymentInfo: {
-          merchant_upi_id: dataset.settings.merchant_upi_id,
-          merchant_name: dataset.settings.merchant_name,
-          owner_whatsapp_phone: dataset.settings.owner_whatsapp_phone,
-        },
-      });
-    } catch (err) {
-      const message =
-        err instanceof Error ? err.message : 'Failed to load tenant portal data.';
-      res.status(500).json({ error: message });
-    }
-  });
-
-  app.post(
-    '/api/portal/tenant/:tenantId/requests',
-    async (req: Request, res: Response) => {
-      try {
-        const tenantId = String(req.params.tenantId || '').trim();
-        const { category, title, description } = req.body as {
-          category?: RequestCategory;
-          title?: string;
-          description?: string;
-        };
-
-        const validCategories = new Set<RequestCategory>([
-          'Plumbing',
-          'Electrical',
-          'Painting',
-          'Other',
-        ]);
-        const cleanCategory: RequestCategory =
-          category && validCategories.has(category) ? category : 'Other';
-        const cleanTitle = String(title || '').trim();
-        const cleanDescription = String(description || '').trim();
-
-        if (!cleanTitle || !cleanDescription) {
-          res.status(400).json({ error: 'Issue title and description are required.' });
-          return;
-        }
-
-        const dataset = await readOrSeedEstateDataset();
-        const tenant = dataset.tenants.find((t) => t.id === tenantId);
-        if (!tenant) {
-          res.status(404).json({ error: 'Tenant record not found.' });
-          return;
-        }
-
-        const property = dataset.properties.find(
-          (p) => p.property_id === tenant.property_id
-        );
-        const unit = dataset.units.find((u) => u.unit_id === tenant.unit_id);
-        const nowIso = new Date().toISOString();
-
-        const newRequest: MaintenanceRequest = {
-          id: `REQ-${Date.now().toString().slice(-6)}`,
-          property_id: tenant.property_id,
-          property_name: property?.property_name || tenant.property_id,
-          unit_id: tenant.unit_id,
-          unit_name: unit?.unit_name || tenant.unit_id,
-          tenant_id: tenant.id,
-          tenant_name: tenant.full_name,
-          category: cleanCategory,
-          title: cleanTitle,
-          description: cleanDescription,
-          status: 'Open',
-          reported_by: 'Tenant Portal',
-          created_at: nowIso,
-          updated_at: nowIso,
-          resolved_at: null,
-          resolution_note: '',
-        };
-
-        const nextRequests = [newRequest, ...(dataset.requests || [])];
-        const nextDataset: EstateDataset = {
-          ...dataset,
-          requests: nextRequests,
-        };
-
-        await persistEstateDataset(nextDataset);
-        const sheetResult = await syncTableServer('Requests', nextRequests);
-
-        res.status(201).json({
-          ok: true,
-          request: newRequest,
-          sheetsSynced: sheetResult.ok,
-          sheetsNote: sheetResult.ok
-            ? 'Saved to Requests tab in Google Sheets'
-            : sheetResult.error || 'Saved locally; Sheets sync pending',
-        });
-      } catch (err) {
-        const message =
-          err instanceof Error ? err.message : 'Failed to submit maintenance request.';
-        res.status(500).json({ error: message });
-      }
-    }
-  );
-
-  // 1b. Lease Agreement Upload & Static Serving
+  // 1a. Lease Agreement Upload & Static Serving
   app.post('/api/agreements/upload', async (req: Request, res: Response) => {
     const auth = await requireAuthSession(req, res, ['admin']);
     if (!auth) return;

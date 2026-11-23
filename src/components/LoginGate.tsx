@@ -14,7 +14,6 @@ import {
   X,
 } from 'lucide-react';
 import {
-  forceResetFirstPassword,
   loginWithCredentials,
   resetPasswordWithIdentifier,
   resolveBiometricLogin,
@@ -47,12 +46,12 @@ export const LoginGate: React.FC<LoginGateProps> = ({
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
 
-  // Sign Up State (Admin & Viewer only — never Tenant)
+  // Sign Up State (Admin & Viewer only)
   const [signupUserId, setSignupUserId] = useState('');
   const [signupFullName, setSignupFullName] = useState('');
   const [signupEmail, setSignupEmail] = useState('');
   const [signupMobile, setSignupMobile] = useState('');
-  const [signupAccessType, setSignupAccessType] = useState<Exclude<AccessType, 'tenant'>>('viewer');
+  const [signupAccessType, setSignupAccessType] = useState<AccessType>('viewer');
   const [signupPassword, setSignupPassword] = useState('');
   const [signupMasterPin, setSignupMasterPin] = useState('');
   const [showSignupPassword, setShowSignupPassword] = useState(false);
@@ -230,7 +229,7 @@ export const LoginGate: React.FC<LoginGateProps> = ({
             )}
             {mode === 'signup' && (
               <>
-                Create an <span className="font-bold">Admin</span> or <span className="font-bold">Viewer</span> account. Tenants receive portal credentials directly on move-in.
+                Create an <span className="font-bold">Admin</span> or <span className="font-bold">Viewer</span> account to manage properties, meters, and invoices.
               </>
             )}
             {mode === 'reset' && (
@@ -662,150 +661,6 @@ export const LoginGate: React.FC<LoginGateProps> = ({
           </span>
           <span className="font-mono">SRKP Rental Tool</span>
         </div>
-      </main>
-    </div>
-  );
-};
-
-interface ForceResetPasswordScreenProps {
-  session: AuthSession;
-  onPasswordUpdated: (updatedSession: AuthSession) => void;
-  onSignOut: () => void;
-}
-
-export const ForceResetPasswordScreen: React.FC<ForceResetPasswordScreenProps> = ({
-  session,
-  onPasswordUpdated,
-  onSignOut,
-}) => {
-  const [newPassword, setNewPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
-  const [showPwd, setShowPwd] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [isSaving, setIsSaving] = useState(false);
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError(null);
-
-    if (newPassword.trim().length < 4) {
-      setError('Please choose a permanent password of at least 4 characters.');
-      return;
-    }
-    if (newPassword.trim() !== confirmPassword.trim()) {
-      setError('Passwords do not match.');
-      return;
-    }
-    if (!session.authToken) {
-      setError('Session token missing. Please sign in again.');
-      return;
-    }
-
-    setIsSaving(true);
-    const res = await forceResetFirstPassword(session.authToken, newPassword.trim());
-    setIsSaving(false);
-
-    if (!res.ok) {
-      setError('error' in res ? res.error : 'Could not update password.');
-      return;
-    }
-
-    onPasswordUpdated(res.session);
-  };
-
-  return (
-    <div className="min-h-screen w-full max-w-md mx-auto bg-gray-50 shadow-xl flex flex-col overflow-x-hidden">
-      <header className="bg-gradient-to-b from-[#489E44] to-[#3E8E41] text-white px-5 pt-10 pb-12">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-white text-[#3E8E41] font-extrabold text-base shadow-sm">
-              SR
-            </div>
-            <div>
-              <h1 className="text-lg font-bold tracking-tight text-white">
-                Set Your New Password
-              </h1>
-              <p className="text-xs text-emerald-50/90 mt-0.5">
-                Welcome, {session.fullName}
-              </p>
-            </div>
-          </div>
-          <span className="rounded-full bg-[#FACC15] px-2.5 py-1 text-[11px] font-bold text-[#0f172a]">
-            First Login
-          </span>
-        </div>
-
-        <div className="mt-5 rounded-2xl bg-white/15 px-4 py-3 text-xs text-white leading-relaxed">
-          For your security, replace your one-time password with a permanent personal password before opening your portal.
-        </div>
-      </header>
-
-      <main className="flex-1 bg-white rounded-t-[28px] -mt-5 px-5 pt-7 pb-8 space-y-5">
-        {error && (
-          <div
-            role="alert"
-            className="flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-xs font-semibold text-rose-800"
-          >
-            <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
-            <span>{error}</span>
-          </div>
-        )}
-
-        <form onSubmit={(e) => void handleSubmit(e)} className="space-y-4">
-          <div>
-            <label className="block text-xs font-semibold text-gray-700 mb-1.5">
-              New Permanent Password
-            </label>
-            <div className="relative">
-              <input
-                type={showPwd ? 'text' : 'password'}
-                value={newPassword}
-                onChange={(e) => setNewPassword(e.target.value)}
-                placeholder="Minimum 4 characters"
-                className="w-full rounded-xl border border-gray-200 bg-gray-50/50 pl-3.5 pr-11 py-2.5 text-sm font-mono text-[#0f172a] focus:border-[#489E44] focus:bg-white focus:outline-none min-h-[46px]"
-                required
-              />
-              <button
-                type="button"
-                onClick={() => setShowPwd((v) => !v)}
-                className="absolute right-2 top-1/2 -translate-y-1/2 p-2 rounded-lg text-gray-400 hover:text-gray-700 cursor-pointer"
-              >
-                {showPwd ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-              </button>
-            </div>
-          </div>
-
-          <div>
-            <label className="block text-xs font-semibold text-gray-700 mb-1.5">
-              Confirm Permanent Password
-            </label>
-            <input
-              type={showPwd ? 'text' : 'password'}
-              value={confirmPassword}
-              onChange={(e) => setConfirmPassword(e.target.value)}
-              placeholder="Re-enter your new password"
-              className="w-full rounded-xl border border-gray-200 bg-gray-50/50 px-3.5 py-2.5 text-sm font-mono text-[#0f172a] focus:border-[#489E44] focus:bg-white focus:outline-none min-h-[46px]"
-              required
-            />
-          </div>
-
-          <button
-            type="submit"
-            disabled={isSaving}
-            className="w-full inline-flex items-center justify-center gap-2 rounded-2xl bg-[#489E44] px-4 py-3.5 text-sm font-semibold text-white hover:bg-[#3E8E41] disabled:opacity-60 cursor-pointer min-h-[48px]"
-          >
-            <KeyRound className="w-4 h-4" />
-            <span>{isSaving ? 'Saving Password...' : 'Save & Enter Portal'}</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={onSignOut}
-            className="w-full rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-xs font-semibold text-gray-600 hover:bg-gray-50 cursor-pointer min-h-[44px]"
-          >
-            Cancel &amp; Sign Out
-          </button>
-        </form>
       </main>
     </div>
   );

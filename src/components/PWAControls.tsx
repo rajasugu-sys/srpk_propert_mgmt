@@ -5,12 +5,11 @@ import {
   Download,
   Laptop,
   MessageSquare,
-  QrCode,
+  Share2,
   Smartphone,
   WifiOff,
   X,
 } from 'lucide-react';
-import { QRCodeSVG } from 'qrcode.react';
 import { useOnlineStatus, usePWAInstall } from '../hooks/usePWAInstall';
 
 export const SHARED_MOBILE_APP_URL =
@@ -150,25 +149,9 @@ export const InstallAppModal: React.FC<{
           </div>
         )}
 
-        {/* QR Code + Share Link Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-12 gap-5 items-center rounded-xl border border-[#e2e8f0] bg-[#f8f9ff] p-4">
-          <div className="md:col-span-5 flex flex-col items-center justify-center space-y-2.5">
-            <div className="rounded-xl bg-white p-3 border border-[#e2e8f0]">
-              <QRCodeSVG
-                value={activeUrl}
-                size={148}
-                bgColor="#ffffff"
-                fgColor="#0f172a"
-              />
-            </div>
-            <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-slate-600">
-              <QrCode className="w-3.5 h-3.5 text-[#2563eb]" />
-              <span>Scan with Phone Camera</span>
-            </span>
-          </div>
-
-          <div className="md:col-span-7 space-y-3">
-            <div>
+        {/* Share Link Panel */}
+        <div className="rounded-xl border border-[#e2e8f0] bg-[#f8f9ff] p-4 space-y-3">
+          <div>
               <div className="text-xs font-bold text-[#0f172a]">
                 Portal & Mobile URL
               </div>
@@ -231,7 +214,6 @@ export const InstallAppModal: React.FC<{
                 <span>Send Link on WhatsApp</span>
               </a>
             </div>
-          </div>
         </div>
 
         {/* Platform Installation Steps */}
@@ -282,7 +264,7 @@ export const InstallAppModal: React.FC<{
               </div>
               <ol className="list-decimal list-inside space-y-1.5">
                 <li>
-                  Scan the QR code above or open the <strong>Shared Mobile URL</strong> directly in{' '}
+                  Open the <strong>Shared Mobile URL</strong> directly in{' '}
                   <strong>Google Chrome</strong> (not inside an in-app browser).
                 </li>
                 <li>
@@ -324,7 +306,7 @@ export const InstallAppModal: React.FC<{
               <ol className="list-decimal list-inside space-y-1.5">
                 <li>
                   Bookmark or open the Portal URL in Chrome or Edge on your laptop for the wide{' '}
-                  <strong>Laptop Ledger Table</strong>, keyboard-friendly forms, and 1-click CSV export.
+                  <strong>Tabular Invoice View</strong>, keyboard-friendly forms, and 1-click PDF export.
                 </li>
                 <li>
                   To pin it as a standalone desktop app: click the{' '}
@@ -359,9 +341,9 @@ export const PWAInstallButton: React.FC<{
           type="button"
           onClick={openInstallHub}
           className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-[#e2e8f0] bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer min-h-[36px]"
-          title="Share Mobile App QR & Portal Links"
+          title="Share Mobile App & Portal Links"
         >
-          <QrCode className="w-3.5 h-3.5 text-[#2563eb]" />
+          <Share2 className="w-3.5 h-3.5 text-[#2563eb]" />
           <span className="hidden sm:inline">Share App</span>
         </button>
         {!onOpenModal && (
@@ -400,11 +382,11 @@ export const PWAInstallButton: React.FC<{
               ? 'px-2 sm:px-2.5 py-1.5 text-xs min-h-[34px] sm:min-h-[36px]'
               : 'px-3.5 py-2 text-sm min-h-[40px]'
           }`}
-          title="Mobile Install Options, QR Code & Laptop Portal"
+          title="Mobile Install Options & Laptop Portal"
         >
           <Smartphone className="w-3.5 h-3.5 text-[#2563eb] shrink-0" />
           <span className={isInstallable ? 'hidden xl:inline' : 'hidden sm:inline'}>
-            {isInstallable ? 'Mobile QR' : 'Install Mobile App'}
+            {isInstallable ? 'Mobile Link' : 'Install Mobile App'}
           </span>
         </button>
       </div>

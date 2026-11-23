@@ -17,7 +17,7 @@ export default defineConfig(() => {
           id: '/',
           name: 'SRKP Rental Tool',
           short_name: 'SRKP Rental',
-          description: 'Manage 12 residential units across Bengaluru and Chennai with utility meter capture, UPI invoicing, and Google Sheets sync.',
+          description: 'Manage 12 residential units across Bengaluru and Chennai with utility meter capture, image invoicing, and Google Sheets sync.',
           theme_color: '#0f172a',
           background_color: '#f8f9ff',
           display: 'standalone',
@@ -46,6 +46,7 @@ export default defineConfig(() => {
           ],
         },
         workbox: {
+          maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
           skipWaiting: true,
           clientsClaim: true,
           cleanupOutdatedCaches: true,

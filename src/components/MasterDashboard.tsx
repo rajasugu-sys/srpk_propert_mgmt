@@ -5,7 +5,7 @@ import {
   BellRing,
   Building2,
   Calendar,
-  Download,
+  FileDown,
   FileText,
   Gauge,
   Home,
@@ -37,10 +37,10 @@ import {
   formatCompactINR,
   formatINR,
   formatTenureReminderWhatsApp,
-  getFloorSortRank,
   getTenureRemainingInfo,
   normalizeWhatsAppDigits,
 } from '../utils/billingEngine';
+import { exportInvoicesSummaryPdf } from '../utils/invoicePdfExport';
 
 interface MasterDashboardProps {
   session: AuthSession;
@@ -137,6 +137,7 @@ export const MasterDashboard: React.FC<MasterDashboardProps> = ({
   const [tenantFilter, setTenantFilter] = useState<TenantFilterMode>('active');
   const [showAlertsModal, setShowAlertsModal] = useState(false);
   const [selectedTenantId, setSelectedTenantId] = useState<string | null>(null);
+  const [pdfNotice, setPdfNotice] = useState<string | null>(null);
 
   const todayFormatted = useMemo(() => {
     return new Date().toLocaleDateString('en-US', {
@@ -259,99 +260,44 @@ export const MasterDashboard: React.FC<MasterDashboardProps> = ({
     return { tenant, property, unit, tenureInfo };
   }, [selectedTenantId, tenants, properties, units]);
 
-  const handleExportCsv = () => {
-    const sortedUnits = [...scopedUnits].sort((a, b) => {
-      const propA =
-        properties.find((p) => p.property_id === a.property_id)?.property_name || '';
-      const propB =
-        properties.find((p) => p.property_id === b.property_id)?.property_name || '';
-      if (propA !== propB) return propA.localeCompare(propB);
-      const rankDiff = getFloorSortRank(a.floor) - getFloorSortRank(b.floor);
-      if (rankDiff !== 0) return rankDiff;
-      return a.unit_name.localeCompare(b.unit_name);
+  const handleExportInvoicesPdf = () => {
+    setPdfNotice(null);
+    const matchingInvoices = invoices
+      .filter((inv) => {
+        if (inv.billing_month !== billingMonth) return false;
+        if (selectedPropertyId !== 'ALL' && inv.property_id !== selectedPropertyId) {
+          return false;
+        }
+        return true;
+      })
+      .sort((a, b) =>
+        `${a.property_name}-${a.unit_name}`.localeCompare(
+          `${b.property_name}-${b.unit_name}`
+        )
+      );
+
+    if (matchingInvoices.length === 0) {
+      setPdfNotice(
+        `No generated invoices found for ${formatBillingMonthLabel(
+          billingMonth
+        )}. Open Invoices to generate monthly bills first.`
+      );
+      return;
+    }
+
+    const houseLabel =
+      selectedPropertyId === 'ALL'
+        ? 'All Houses'
+        : properties.find((p) => p.property_id === selectedPropertyId)
+            ?.property_name || selectedPropertyId;
+
+    exportInvoicesSummaryPdf({
+      invoices: matchingInvoices,
+      filterSummary: `Month: ${formatBillingMonthLabel(
+        billingMonth
+      )}  |  House: ${houseLabel}`,
+      fileName: `SRKP-Invoices-${billingMonth}.pdf`,
     });
-
-    const headers = [
-      'Property',
-      'Floor',
-      'Unit',
-      'Type',
-      'Status',
-      'Tenant',
-      'Lease Type',
-      'Monthly Rent',
-      'Tenant Cleaning Fee',
-      'Building Maint Share',
-      'EB Amount',
-      'EB Mode',
-      'Water Units',
-      'Water Amount',
-      'Payable To Owner',
-      'Invoice Status',
-    ];
-
-    const lines = sortedUnits.map((unit) => {
-      const property = properties.find((p) => p.property_id === unit.property_id);
-      const tenant = unit.current_tenant_id
-        ? tenants.find((t) => t.id === unit.current_tenant_id && t.is_active)
-        : undefined;
-      const reading = utilityReadings.find(
-        (r) => r.unit_id === unit.unit_id && r.billing_month === billingMonth
-      );
-      const invoice = invoices.find(
-        (inv) => inv.unit_id === unit.unit_id && inv.billing_month === billingMonth
-      );
-      const houseMaint = houseMaintenanceBills.find(
-        (m) => m.property_id === unit.property_id && m.billing_month === billingMonth
-      );
-      const houseUnitCount = units.filter((u) => u.property_id === unit.property_id).length;
-      const bldgShare =
-        invoice?.building_maintenance_share ??
-        (tenant && houseMaint && houseUnitCount > 0
-          ? Math.round(houseMaint.total_house_maintenance / houseUnitCount)
-          : 0);
-      const rent = tenant ? (tenant.lease_type === 'Lease' ? 0 : tenant.monthly_rent) : 0;
-      const cleaningFee =
-        invoice?.tenant_cleaning_fee ?? (tenant ? tenant.monthly_maintenance_charge : 0);
-      const eb = reading?.eb_bill_amount ?? invoice?.eb_amount ?? 0;
-      const ebOwner = invoice?.eb_paid_to_owner ?? reading?.eb_paid_to_owner ?? true;
-      const waterUnits = reading?.net_consumption ?? invoice?.water_net_units ?? 0;
-      const waterAmt = reading?.water_bill_amount ?? invoice?.water_amount ?? 0;
-      const payableOwner =
-        invoice?.total_payable_to_owner ??
-        (tenant ? rent + cleaningFee + bldgShare + waterAmt + (ebOwner ? eb : 0) : 0);
-
-      const cols = [
-        property?.property_name || unit.property_id,
-        unit.floor,
-        unit.unit_name,
-        unit.unit_type,
-        unit.status,
-        tenant?.full_name || 'Vacant',
-        tenant?.lease_type || '-',
-        rent,
-        cleaningFee,
-        bldgShare,
-        eb,
-        tenant ? (ebOwner ? 'Owner' : 'Direct') : '-',
-        waterUnits,
-        waterAmt,
-        payableOwner,
-        invoice?.payment_status || 'PENDING',
-      ];
-      return cols.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(',');
-    });
-
-    const csv = [headers.join(','), ...lines].join('\n');
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `SRKP-Rental-Tool-Ledger-${billingMonth}.csv`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
   };
 
   // Strictly 8 launcher items in a 4x2 grid (NO Requests / Tickets module)
@@ -611,12 +557,13 @@ export const MasterDashboard: React.FC<MasterDashboardProps> = ({
           <div className="flex items-center gap-1.5 shrink-0">
             <button
               type="button"
-              onClick={handleExportCsv}
-              className="flex h-9 w-9 items-center justify-center rounded-xl border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 cursor-pointer"
-              title={`Export ${formatBillingMonthLabel(billingMonth)} Ledger CSV`}
-              aria-label="Export CSV"
+              onClick={handleExportInvoicesPdf}
+              className="inline-flex h-9 items-center justify-center gap-1 rounded-xl border border-gray-200 bg-white px-2.5 text-[11px] font-bold text-[#0f172a] hover:bg-gray-50 cursor-pointer whitespace-nowrap"
+              title={`Export ${formatBillingMonthLabel(billingMonth)} Invoices PDF`}
+              aria-label="Export Invoices PDF"
             >
-              <Download className="w-4 h-4" />
+              <FileDown className="w-3.5 h-3.5 text-[#3E8E41]" />
+              <span>Export PDF</span>
             </button>
             {!isReadOnly && (
               <button
@@ -631,6 +578,32 @@ export const MasterDashboard: React.FC<MasterDashboardProps> = ({
             )}
           </div>
         </div>
+
+        {pdfNotice && (
+          <div className="flex items-center justify-between gap-2 rounded-2xl border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-xs font-semibold text-amber-900">
+            <span className="min-w-0">{pdfNotice}</span>
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() => {
+                  setPdfNotice(null);
+                  onOpenInvoices();
+                }}
+                className="rounded-lg bg-amber-200/80 px-2 py-1 text-[11px] font-bold text-amber-950 hover:bg-amber-200 cursor-pointer"
+              >
+                Open Invoices
+              </button>
+              <button
+                type="button"
+                onClick={() => setPdfNotice(null)}
+                className="p-0.5 text-amber-700 hover:text-amber-950 cursor-pointer"
+                aria-label="Dismiss PDF export notice"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Expiring Tenure Callout Strip (compact) */}
         {expiringTenants.length > 0 && tenantFilter !== 'vacated' && (

@@ -5,24 +5,18 @@ import {
   ArrowRight,
   Building2,
   Check,
-  Copy,
   Download,
   FileText,
-  KeyRound,
   LogOut,
   MessageSquare,
   Pencil,
-  RefreshCw,
   Search,
   Trash2,
   Upload,
   UserPlus,
   X,
 } from 'lucide-react';
-import {
-  generateTemporaryPassword,
-  getAuthFetchHeaders,
-} from '../config/authConfig';
+import { getAuthFetchHeaders } from '../config/authConfig';
 import {
   DeductionRow,
   InvoiceRecord,
@@ -57,7 +51,6 @@ interface TenantLifecycleViewProps {
   onCompleteOnboarding: (payload: {
     tenant: TenantRecord;
     unitUpdate: Unit;
-    oneTimePassword: string;
   }) => void;
   onUpdateTenant: (tenant: TenantRecord) => void;
   onCompleteMoveOut: (payload: {
@@ -150,10 +143,6 @@ export const TenantLifecycleView: React.FC<TenantLifecycleViewProps> = ({
   const [assignedUnitId, setAssignedUnitId] = useState('');
   const [fullName, setFullName] = useState('');
   const [whatsappPhone, setWhatsappPhone] = useState('+91');
-  const [oneTimePassword, setOneTimePassword] = useState(() =>
-    generateTemporaryPassword(8)
-  );
-  const [copiedOtp, setCopiedOtp] = useState(false);
   const [moveInDate, setMoveInDate] = useState(new Date().toISOString().slice(0, 10));
   const [tenureMonths, setTenureMonths] = useState('11');
   const [leaseEndDate, setLeaseEndDate] = useState(
@@ -237,8 +226,6 @@ export const TenantLifecycleView: React.FC<TenantLifecycleViewProps> = ({
     setAssignedUnitId(targetUnit?.unit_id || '');
     setFullName('');
     setWhatsappPhone('+91');
-    setOneTimePassword(generateTemporaryPassword(8));
-    setCopiedOtp(false);
     setMoveInDate(todayStr);
     setTenureMonths('11');
     setLeaseEndDate(calculateLeaseEndDate(todayStr, 11));
@@ -421,10 +408,6 @@ export const TenantLifecycleView: React.FC<TenantLifecycleViewProps> = ({
         setOnboardError('Enter a valid WhatsApp phone number with country code.');
         return;
       }
-      if (oneTimePassword.trim().length < 4) {
-        setOnboardError('Tenant Portal One-Time Password must be at least 4 characters.');
-        return;
-      }
       setStep(2);
       return;
     }
@@ -510,7 +493,6 @@ export const TenantLifecycleView: React.FC<TenantLifecycleViewProps> = ({
     onCompleteOnboarding({
       tenant: newTenant,
       unitUpdate,
-      oneTimePassword: oneTimePassword.trim(),
     });
     setShowOnboard(false);
   };
@@ -1085,56 +1067,6 @@ export const TenantLifecycleView: React.FC<TenantLifecycleViewProps> = ({
                         className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm text-[#0f172a] min-h-[42px]"
                       />
                     </div>
-                  </div>
-
-                  {/* Tenant Portal One-Time Password */}
-                  <div className="rounded-xl border border-emerald-200 bg-emerald-50/70 p-3 space-y-2">
-                    <div className="flex items-center justify-between gap-2">
-                      <label className="inline-flex items-center gap-1.5 text-xs font-bold text-[#0f172a]">
-                        <KeyRound className="w-3.5 h-3.5 text-[#489E44]" />
-                        <span>Tenant Portal One-Time Password *</span>
-                      </label>
-                      <div className="flex items-center gap-1">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setOneTimePassword(generateTemporaryPassword(8));
-                            setCopiedOtp(false);
-                          }}
-                          className="inline-flex items-center gap-1 rounded-lg border border-emerald-200 bg-white px-2 py-1 text-[10px] font-bold text-[#3E8E41] hover:bg-emerald-50 cursor-pointer"
-                        >
-                          <RefreshCw className="w-3 h-3" />
-                          <span>New</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            void navigator.clipboard?.writeText(oneTimePassword).then(() => {
-                              setCopiedOtp(true);
-                              setTimeout(() => setCopiedOtp(false), 1800);
-                            });
-                          }}
-                          className="inline-flex items-center gap-1 rounded-lg border border-emerald-200 bg-white px-2 py-1 text-[10px] font-bold text-[#0f172a] hover:bg-emerald-50 cursor-pointer"
-                        >
-                          {copiedOtp ? (
-                            <Check className="w-3 h-3 text-[#489E44]" />
-                          ) : (
-                            <Copy className="w-3 h-3" />
-                          )}
-                          <span>{copiedOtp ? 'Copied' : 'Copy'}</span>
-                        </button>
-                      </div>
-                    </div>
-                    <input
-                      type="text"
-                      value={oneTimePassword}
-                      onChange={(e) => setOneTimePassword(e.target.value)}
-                      placeholder="Temporary 8-char password"
-                      className="w-full rounded-xl border border-emerald-200 bg-white px-3 py-2 text-sm font-mono font-bold tracking-wider text-[#0f172a] min-h-[40px]"
-                    />
-                    <p className="text-[11px] text-gray-600 leading-snug">
-                      Tenant signs in with their 10-digit mobile number and this temporary password, and will be prompted to set a permanent password on first login.
-                    </p>
                   </div>
                 </>
               )}

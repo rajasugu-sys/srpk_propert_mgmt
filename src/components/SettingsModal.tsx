@@ -13,11 +13,11 @@ import {
   EyeOff,
   FileSpreadsheet,
   KeyRound,
-  QrCode,
   RefreshCw,
   RotateCcw,
   Save,
   Settings,
+  Smartphone,
   X,
   XCircle,
 } from 'lucide-react';
@@ -85,7 +85,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   onOpenInstallModal,
   onResetBaseline,
 }) => {
-  const [upiId, setUpiId] = useState(settings.merchant_upi_id);
   const [merchantName, setMerchantName] = useState(settings.merchant_name);
   const [ownerPhone, setOwnerPhone] = useState(settings.owner_whatsapp_phone || '+91');
   const [autoLockTimer, setAutoLockTimer] = useState<AutoLockTimerMode>(
@@ -106,7 +105,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
   useEffect(() => {
     if (!isOpen) return;
-    setUpiId(settings.merchant_upi_id);
     setMerchantName(settings.merchant_name);
     setOwnerPhone(settings.owner_whatsapp_phone || '+91');
     setAutoLockTimer(
@@ -207,7 +205,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
     onSaveSettings({
       ...settings,
-      merchant_upi_id: upiId.trim() || settings.merchant_upi_id,
       merchant_name: merchantName.trim() || settings.merchant_name,
       owner_whatsapp_phone: ownerPhone.trim() || settings.owner_whatsapp_phone,
       auto_lock_timer: autoLockTimer,
@@ -239,7 +236,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 Admin Settings &amp; System Config
               </h2>
               <p className="text-xs text-emerald-50/90 mt-0.5">
-                Auto-Lock, UPI details, Master Admin PIN, Google Sheets &amp; App QR
+                Auto-Lock, Owner details, Master Admin PIN, Google Sheets &amp; App Link
               </p>
             </div>
           </div>
@@ -483,7 +480,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             </div>
 
             <p className="text-[11px] text-gray-600 leading-relaxed">
-              Required when new users sign up with <strong>Admin</strong> access. Viewers and Tenants never see this PIN.
+              Required when new users sign up with <strong>Admin</strong> access. Viewers never see this PIN.
             </p>
 
             <div className="flex flex-wrap items-center gap-2">
@@ -561,28 +558,17 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             )}
           </section>
 
-          {/* 3. Auto-Lock Timer & UPI Payment Settings Form */}
+          {/* 3. Auto-Lock Timer & Owner Details Form */}
           <form onSubmit={handleSave} className="space-y-4">
-            {/* UPI Payment Details */}
+            {/* Owner & Estate Details */}
             <section className="rounded-2xl border border-gray-200 bg-white p-4 space-y-3">
               <h3 className="text-xs font-bold uppercase tracking-wider text-[#0f172a]">
-                UPI Payment ID &amp; Owner Details
+                Owner &amp; Estate Details
               </h3>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-semibold text-gray-700 mb-1.5">
-                    UPI ID (QR / Links)
-                  </label>
-                  <input
-                    type="text"
-                    value={upiId}
-                    onChange={(e) => setUpiId(e.target.value)}
-                    className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm font-mono text-[#0f172a] min-h-[42px]"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-gray-700 mb-1.5">
-                    Estate / Payee Name
+                    Estate / Management Name
                   </label>
                   <input
                     type="text"
@@ -712,15 +698,15 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             </div>
           </form>
 
-          {/* 4. Install Mobile App & Share QR */}
+          {/* 4. Install Mobile App & Share Link */}
           <section className="rounded-2xl border border-gray-200 bg-gray-50/70 p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div className="flex items-center gap-3 min-w-0">
               <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-[#489E44]">
-                <QrCode className="w-5 h-5" />
+                <Smartphone className="w-5 h-5" />
               </div>
               <div className="min-w-0">
                 <div className="text-xs font-bold text-[#0f172a]">
-                  Install Mobile App &amp; Share QR
+                  Install Mobile App &amp; Share Link
                 </div>
                 <div className="text-[11px] text-gray-500">
                   Android, iPhone / iPad Safari &amp; Laptop Desktop PWA

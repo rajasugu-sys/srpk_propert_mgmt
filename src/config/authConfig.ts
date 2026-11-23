@@ -1,6 +1,5 @@
 import type {
   AccessType,
-  AppUserAccount,
   AuthSession,
   AutoLockTimerMode,
 } from '../types/estate';
@@ -191,9 +190,7 @@ export function loadPersistedAuthSession(): AuthSession | null {
 
     const parsed = JSON.parse(raw) as Partial<AuthSession>;
     if (
-      (parsed.accessType === 'admin' ||
-        parsed.accessType === 'viewer' ||
-        parsed.accessType === 'tenant') &&
+      (parsed.accessType === 'admin' || parsed.accessType === 'viewer') &&
       typeof parsed.userId === 'string' &&
       parsed.userId.trim() &&
       typeof parsed.authToken === 'string' &&
@@ -208,16 +205,8 @@ export function loadPersistedAuthSession(): AuthSession | null {
         mobileNumber: parsed.mobileNumber || '',
         accessType: parsed.accessType,
         accessStatus: parsed.accessStatus === 'revoked' ? 'revoked' : 'active',
-        mustResetPassword: Boolean(parsed.mustResetPassword),
-        tenantId: parsed.tenantId || null,
-        unitId: parsed.unitId || null,
         authToken: parsed.authToken,
-        role:
-          parsed.accessType === 'admin'
-            ? 'Admin'
-            : parsed.accessType === 'viewer'
-              ? 'Viewer'
-              : 'Tenant',
+        role: parsed.accessType === 'admin' ? 'Admin' : 'Viewer',
         username: parsed.userId,
         loginMethod: parsed.loginMethod === 'biometric' ? 'biometric' : 'password',
         authenticatedAt: parsed.authenticatedAt || new Date().toISOString(),
@@ -245,17 +234,6 @@ export function savePersistedAuthSession(session: AuthSession | null): void {
   } catch {
     // ignore storage errors
   }
-}
-
-export function generateTemporaryPassword(length = 8): string {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  const buf = new Uint8Array(length);
-  crypto.getRandomValues(buf);
-  let out = '';
-  for (let i = 0; i < length; i += 1) {
-    out += chars[buf[i] % chars.length];
-  }
-  return out;
 }
 
 export function getAuthFetchHeaders(
@@ -298,7 +276,7 @@ export async function signUpAccount(payload: {
   fullName: string;
   email: string;
   mobileNumber: string;
-  accessType: Exclude<AccessType, 'tenant'>;
+  accessType: AccessType;
   password: string;
   masterAdminPin?: string;
 }): Promise<{ ok: true; session: AuthSession } | { ok: false; error: string }> {
@@ -349,29 +327,6 @@ export async function resetPasswordWithIdentifier(payload: {
   }
 }
 
-export async function forceResetFirstPassword(
-  authToken: string,
-  newPassword: string
-): Promise<{ ok: true; session: AuthSession } | { ok: false; error: string }> {
-  try {
-    const res = await fetch('/api/auth/force-reset-password', {
-      method: 'POST',
-      headers: getAuthFetchHeaders(authToken, { 'Content-Type': 'application/json' }),
-      body: JSON.stringify({ newPassword }),
-    });
-    const data = (await res.json()) as {
-      ok?: boolean;
-      session?: AuthSession;
-      error?: string;
-    };
-    if (!res.ok || !data.ok || !data.session) {
-      return { ok: false, error: data.error || 'Failed setting new password.' };
-    }
-    return { ok: true, session: data.session };
-  } catch {
-    return { ok: false, error: 'Unable to reach authentication server.' };
-  }
-}
 
 export async function changeAccountPassword(
   authToken: string,
@@ -421,55 +376,6 @@ export async function resolveBiometricLogin(
   }
 }
 
-export async function provisionTenantPortalAccount(
-  authToken: string,
-  payload: {
-    tenantId: string;
-    unitId: string;
-    fullName: string;
-    mobileNumber: string;
-    oneTimePassword: string;
-  }
-): Promise<{ ok: true; user: AppUserAccount } | { ok: false; error: string }> {
-  try {
-    const res = await fetch('/api/auth/tenant-provision', {
-      method: 'POST',
-      headers: getAuthFetchHeaders(authToken, { 'Content-Type': 'application/json' }),
-      body: JSON.stringify(payload),
-    });
-    const data = (await res.json()) as {
-      ok?: boolean;
-      user?: AppUserAccount;
-      error?: string;
-    };
-    if (!res.ok || !data.ok || !data.user) {
-      return {
-        ok: false,
-        error: data.error || 'Failed provisioning tenant portal login.',
-      };
-    }
-    return { ok: true, user: data.user };
-  } catch {
-    return { ok: false, error: 'Unable to reach authentication server.' };
-  }
-}
-
-export async function revokeTenantPortalAccount(
-  authToken: string,
-  payload: { tenantId: string; mobileNumber?: string }
-): Promise<{ ok: boolean; error?: string }> {
-  try {
-    const res = await fetch('/api/auth/tenant-revoke', {
-      method: 'POST',
-      headers: getAuthFetchHeaders(authToken, { 'Content-Type': 'application/json' }),
-      body: JSON.stringify(payload),
-    });
-    const data = (await res.json()) as { ok?: boolean; error?: string };
-    return { ok: Boolean(res.ok && data.ok), error: data.error };
-  } catch {
-    return { ok: false, error: 'Unable to reach authentication server.' };
-  }
-}
 
 export async function fetchMasterAdminPin(
   authToken: string

@@ -13,15 +13,13 @@ import { AddExpensesView } from './components/AddExpensesView';
 import { AnnouncementsView } from './components/AnnouncementsView';
 import { ExpensesView } from './components/ExpensesView';
 import { InvoicesView } from './components/InvoicesView';
-import { ForceResetPasswordScreen, LoginGate } from './components/LoginGate';
+import { LoginGate } from './components/LoginGate';
 import { MaintenanceView } from './components/MaintenanceView';
 import { MasterDashboard } from './components/MasterDashboard';
 import { ProfileView } from './components/ProfileView';
 import { InstallAppModal, OfflineIndicator } from './components/PWAControls';
 import { SettingsModal } from './components/SettingsModal';
-import { TenantAuthenticatedPortal } from './components/TenantAuthenticatedPortal';
 import { TenantLifecycleView } from './components/TenantLifecycleView';
-import { TenantPortalView } from './components/TenantPortalView';
 import { UnitsManagementView } from './components/UnitsManagementView';
 import { UtilityMeterCapture } from './components/UtilityMeterCapture';
 import {
@@ -31,10 +29,8 @@ import {
   isValidAutoLockMode,
   loadAutoLockTimerMode,
   loadPersistedAuthSession,
-  provisionTenantPortalAccount,
   recordHiddenAtTimestamp,
   recordLastActivityTimestamp,
-  revokeTenantPortalAccount,
   saveAutoLockTimerMode,
   savePersistedAuthSession,
 } from './config/authConfig';
@@ -80,7 +76,7 @@ import {
   UtilityReading,
 } from './types/estate';
 import {
-  buildUpiPaymentLink,
+  buildDefaultWaterReference,
   calculateLeaseEndDate,
   getTenureRemainingInfo,
   isInvoiceLockedStatus,
@@ -237,6 +233,16 @@ function migrateInvoiceRecord(rawInv: Record<string, unknown>): InvoiceRecord {
     is_locked: isLocked,
     paid_at: rawInv.paid_at ? String(rawInv.paid_at) : null,
     closed_at: rawInv.closed_at ? String(rawInv.closed_at) : null,
+    keb_account_id: rawInv.keb_account_id ? String(rawInv.keb_account_id) : undefined,
+    water_reference: rawInv.water_reference ? String(rawInv.water_reference) : undefined,
+    motor_bill_amount:
+      rawInv.motor_bill_amount !== undefined && rawInv.motor_bill_amount !== ''
+        ? toNum(rawInv.motor_bill_amount, 0)
+        : undefined,
+    others_amount:
+      rawInv.others_amount !== undefined && rawInv.others_amount !== ''
+        ? toNum(rawInv.others_amount, 0)
+        : undefined,
   };
 }
 
@@ -416,6 +422,10 @@ function recalculateOpenInvoices(
     const cappedPaid = Math.min(inv.amount_paid, totalPayableToOwner);
     const balanceDue = Math.max(0, totalPayableToOwner - cappedPaid);
 
+    const motorFromMaint =
+      houseMaint && unitCount > 0 ? Math.round(houseMaint.common_eb_amount / unitCount) : 0;
+    const othersFromMaint = Math.max(0, bldgShare - motorFromMaint) + carriedForward;
+
     const recalced: InvoiceRecord = {
       ...inv,
       property_name: property?.property_name ?? inv.property_name,
@@ -444,14 +454,19 @@ function recalculateOpenInvoices(
       total_payable_to_owner: totalPayableToOwner,
       amount_paid: cappedPaid,
       balance_due: balanceDue,
-      upi_link: buildUpiPaymentLink({
-        upiId: state.settings.merchant_upi_id,
-        payeeName: state.settings.merchant_name,
-        amount: balanceDue > 0 ? balanceDue : totalPayableToOwner,
-        note: `${inv.id} ${property?.property_name || inv.property_name} ${
-          unit?.unit_name || inv.unit_name
-        }`,
-      }),
+      keb_account_id: inv.keb_account_id || unit?.eb_rr_number || '',
+      water_reference:
+        inv.water_reference ||
+        buildDefaultWaterReference({
+          waterRr1: unit?.water_rr_number,
+          waterRr2: unit?.water_rr_number2,
+          prev1,
+          curr1,
+          prev2,
+          curr2,
+        }),
+      motor_bill_amount: houseMaint ? motorFromMaint : inv.motor_bill_amount ?? 0,
+      others_amount: houseMaint ? othersFromMaint : inv.others_amount ?? carriedForward,
     };
 
     updatedInvoices.push(recalced);
@@ -577,21 +592,6 @@ function parsePulledTables(
 }
 
 export default function App() {
-  const portalParams = useMemo(() => {
-    if (typeof window === 'undefined') {
-      return { isTenantPortal: false, tenantId: null as string | null, invoiceId: null as string | null };
-    }
-    const qs = new URLSearchParams(window.location.search);
-    const portal = qs.get('portal');
-    const tenantId = qs.get('tenantId');
-    const invoiceId = qs.get('invoiceId');
-    return {
-      isTenantPortal: portal === 'tenant' && Boolean(tenantId),
-      tenantId,
-      invoiceId,
-    };
-  }, []);
-
   const [session, setSession] = useState<AuthSession | null>(loadPersistedAuthSession);
   const [lockNotice, setLockNotice] = useState<string | null>(null);
   const [autoLockTimer, setAutoLockTimer] = useState<AutoLockTimerMode>(() =>
@@ -765,7 +765,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!session || session.mustResetPassword || portalParams.isTenantPortal) return;
+    if (!session) return;
     void (async () => {
       await fetchServerDataset(session.authToken);
       if (session.accessType === 'admin' || session.accessType === 'viewer') {
@@ -774,7 +774,7 @@ export default function App() {
         await handlePullFromSheets({ silentOnFailureOrEmpty: true });
       }
     })();
-  }, [session, portalParams.isTenantPortal, fetchServerDataset, handlePullFromSheets]);
+  }, [session, fetchServerDataset, handlePullFromSheets]);
 
   const handleAuthenticated = async (nextSession: AuthSession) => {
     setLockNotice(null);
@@ -782,7 +782,7 @@ export default function App() {
     setSession(nextSession);
     setBiometricPromptFeedback(null);
 
-    if (nextSession.loginMethod === 'password' && !nextSession.mustResetPassword) {
+    if (nextSession.loginMethod === 'password') {
       const supported = await isPlatformBiometricSupported();
       setBiometricSupported(supported);
       if (supported && !isBiometricEnrolledForUser(nextSession.userId)) {
@@ -807,7 +807,7 @@ export default function App() {
 
   // Automatic Session Timeout (15s check) + Background/Re-Launch Lock (visibilitychange & focus)
   useEffect(() => {
-    if (!session || portalParams.isTenantPortal) return;
+    if (!session) return;
 
     recordLastActivityTimestamp(Date.now());
     let lastRecordedMs = Date.now();
@@ -871,7 +871,7 @@ export default function App() {
       document.removeEventListener('visibilitychange', handleVisibilityOrFocus);
       window.removeEventListener('focus', handleVisibilityOrFocus);
     };
-  }, [session, portalParams.isTenantPortal, autoLockTimer, lockApp]);
+  }, [session, autoLockTimer, lockApp]);
 
   const handleEnableBiometricPrompt = async () => {
     if (!session) return;
@@ -891,7 +891,6 @@ export default function App() {
 
   // 3. Persist changes to localStorage AND server /api/estate (Admin writes only)
   useEffect(() => {
-    if (session?.accessType === 'tenant') return;
     try {
       localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(dataset));
     } catch {
@@ -1199,7 +1198,6 @@ export default function App() {
   const handleCompleteOnboarding = (payload: {
     tenant: TenantRecord;
     unitUpdate: Unit;
-    oneTimePassword: string;
   }) => {
     const prevState = datasetRef.current;
     const nextTenants = [payload.tenant, ...prevState.tenants];
@@ -1216,24 +1214,9 @@ export default function App() {
     void (async () => {
       await syncTableDirect('Tenants', nextTenants);
       await syncTableDirect('Units', nextUnits);
-      if (session?.authToken && payload.oneTimePassword) {
-        const prov = await provisionTenantPortalAccount(session.authToken, {
-          tenantId: payload.tenant.id,
-          unitId: payload.unitUpdate.unit_id,
-          fullName: payload.tenant.full_name,
-          mobileNumber: payload.tenant.whatsapp_phone,
-          oneTimePassword: payload.oneTimePassword,
-        });
-        if (prov.ok) {
-          setPullFeedback(
-            `Tenant ${payload.tenant.full_name} onboarded & portal access activated (User ID: ${prov.user.user_id}).`
-          );
-        } else {
-          setPullFeedback(
-            `Tenant saved, but portal account setup failed: ${'error' in prov ? prov.error : 'Unknown error'}`
-          );
-        }
-      }
+      setPullFeedback(
+        `${payload.tenant.full_name} onboarded to unit ${payload.unitUpdate.unit_name}.`
+      );
     })();
   };
 
@@ -1293,17 +1276,9 @@ export default function App() {
     void (async () => {
       await syncTableDirect('Tenants', nextTenants);
       await syncTableDirect('Units', nextUnits);
-      if (session?.authToken) {
-        const rev = await revokeTenantPortalAccount(session.authToken, {
-          tenantId: payload.tenantId,
-          mobileNumber: targetTenant?.whatsapp_phone,
-        });
-        if (rev.ok) {
-          setPullFeedback(
-            `${targetTenant?.full_name || 'Tenant'} moved out and portal access revoked.`
-          );
-        }
-      }
+      setPullFeedback(
+        `${targetTenant?.full_name || 'Tenant'} moved out and unit marked VACANT.`
+      );
     })();
   };
 
@@ -1485,15 +1460,6 @@ export default function App() {
     setDataset((prev) => ({
       ...prev,
       settings: nextSettings,
-      invoices: prev.invoices.map((inv) => ({
-        ...inv,
-        upi_link: buildUpiPaymentLink({
-          upiId: nextSettings.merchant_upi_id,
-          payeeName: nextSettings.merchant_name,
-          amount: inv.balance_due > 0 ? inv.balance_due : inv.total_payable_to_owner,
-          note: `${inv.id} ${inv.property_name} ${inv.unit_name}`,
-        }),
-      })),
     }));
   };
 
@@ -1516,53 +1482,12 @@ export default function App() {
     [dataset.invoices, billingMonth]
   );
 
-  // Read-only Tenant Portal links bypass Owner/Partner lock screen normally
-  if (portalParams.isTenantPortal && portalParams.tenantId) {
-    return (
-      <TenantPortalView
-        tenantId={portalParams.tenantId}
-        initialInvoiceId={portalParams.invoiceId}
-        localDataset={dataset}
-      />
-    );
-  }
-
   if (!session) {
     return (
       <LoginGate
         lockNotice={lockNotice}
         onDismissNotice={() => setLockNotice(null)}
         onAuthenticated={(nextSession) => void handleAuthenticated(nextSession)}
-      />
-    );
-  }
-
-  if (session.mustResetPassword) {
-    return (
-      <ForceResetPasswordScreen
-        session={session}
-        onPasswordUpdated={(updatedSession) => {
-          savePersistedAuthSession(updatedSession);
-          setSession(updatedSession);
-        }}
-        onSignOut={() => lockApp('Signed out.')}
-      />
-    );
-  }
-
-  if (session.accessType === 'tenant') {
-    return (
-      <TenantAuthenticatedPortal
-        session={session}
-        properties={dataset.properties}
-        units={dataset.units}
-        tenants={dataset.tenants}
-        utilityReadings={dataset.utilityReadings}
-        invoices={dataset.invoices}
-        settings={dataset.settings}
-        autoLockMode={autoLockTimer}
-        onChangeAutoLockMode={handleChangeAutoLockTimer}
-        onLockApp={(reason) => lockApp(reason || 'App locked.')}
       />
     );
   }
@@ -1789,7 +1714,6 @@ export default function App() {
             onCreateInvoice={handleCreateInvoice}
             onUpdateInvoice={handleUpdateInvoice}
             isReadOnly={isReadOnly}
-            senderSignature={senderSignature}
           />
         )}
 

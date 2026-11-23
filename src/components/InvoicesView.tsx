@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import {
   AppSettings,
+  EbCollectionMode,
   HouseMaintenanceBill,
   InvoiceRecord,
   PaymentStatus,
@@ -34,6 +35,7 @@ import {
   formatINR,
   getInvoiceBreakdown,
   isInvoiceLockedStatus,
+  resolveEbCollectionMode,
 } from '../utils/billingEngine';
 import { exportInvoicesSummaryPdf } from '../utils/invoicePdfExport';
 import { InvoiceImageTemplate } from './InvoiceImageTemplate';
@@ -131,16 +133,14 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
   const [shareFeedback, setShareFeedback] = useState<string | null>(null);
   const invoiceCaptureRef = useRef<HTMLDivElement | null>(null);
 
-  // Edit / Update Status Modal state
+  // Edit / Update Status Modal state (only payment statuses, EB mode & dates are editable)
   const [editingInvoiceId, setEditingInvoiceId] = useState<string | null>(null);
   const [editStatus, setEditStatus] = useState<PaymentStatus>('Unpaid');
   const [editAmountPaid, setEditAmountPaid] = useState<string>('0');
   const [editPaidDate, setEditPaidDate] = useState<string>('');
-  const [editEbPaidToOwner, setEditEbPaidToOwner] = useState<boolean>(true);
-  const [editKebAccountId, setEditKebAccountId] = useState<string>('');
-  const [editWaterReference, setEditWaterReference] = useState<string>('');
-  const [editMotorBill, setEditMotorBill] = useState<string>('0');
-  const [editOthersAmount, setEditOthersAmount] = useState<string>('0');
+  const [editEbCollectionMode, setEditEbCollectionMode] =
+    useState<EbCollectionMode>('Unpaid');
+  const [editEbPaidDate, setEditEbPaidDate] = useState<string>('');
   const [editError, setEditError] = useState<string | null>(null);
 
   const scopedUnits = useMemo(
@@ -230,7 +230,8 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
       : [];
 
     const ebAmount = reading?.eb_bill_amount ?? 0;
-    const ebPaidToOwner = reading?.eb_paid_to_owner ?? true;
+    const ebCollectionMode: EbCollectionMode = 'Unpaid';
+    const ebPaidToOwner = false;
     const waterAmount = reading?.water_bill_amount ?? 0;
 
     // Automatic Balance Carry-Forward from most recent prior Partially Paid & Closed invoice
@@ -293,6 +294,8 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
       building_maintenance_items: bldgItems,
       eb_amount: ebAmount,
       eb_paid_to_owner: ebPaidToOwner,
+      eb_collection_mode: ebCollectionMode,
+      eb_paid_date: null,
       water_prev_1: waterPrev1,
       water_curr_1: waterCurr1,
       water_prev_2: waterPrev2,
@@ -415,50 +418,21 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
 
   const openEditStatusModal = (inv: InvoiceRecord) => {
     if (inv.is_locked) return;
-    const unit = units.find((u) => u.unit_id === inv.unit_id);
-    const motorFromItems = inv.building_maintenance_items.find(
-      (item) =>
-        item.name.toLowerCase().includes('motor') ||
-        item.name.toLowerCase().includes('common')
-    );
-    const defaultMotor =
-      inv.motor_bill_amount !== undefined
-        ? Math.round(inv.motor_bill_amount)
-        : motorFromItems && inv.building_unit_count > 0
-          ? Math.round(motorFromItems.amount / inv.building_unit_count)
-          : 0;
-    const defaultOthers =
-      inv.others_amount !== undefined
-        ? Math.round(inv.others_amount)
-        : Math.max(
-            0,
-            Math.round(
-              inv.building_maintenance_share -
-                defaultMotor +
-                (inv.carried_forward_balance || 0)
-            )
-          );
-    const defaultWaterRef =
-      inv.water_reference !== undefined && inv.water_reference.trim() !== ''
-        ? inv.water_reference
-        : buildDefaultWaterReference({
-            waterRr1: unit?.water_rr_number,
-            waterRr2: unit?.water_rr_number2,
-            prev1: inv.water_prev_1,
-            curr1: inv.water_curr_1,
-            prev2: inv.water_prev_2,
-            curr2: inv.water_curr_2,
-          });
+    const resolvedMode = resolveEbCollectionMode(inv);
+    const todayIso = new Date().toISOString().slice(0, 10);
 
     setEditingInvoiceId(inv.id);
     setEditStatus(inv.payment_status);
     setEditAmountPaid(String(inv.amount_paid || 0));
     setEditPaidDate(inv.paid_at ? String(inv.paid_at).slice(0, 10) : '');
-    setEditEbPaidToOwner(inv.eb_paid_to_owner);
-    setEditKebAccountId(inv.keb_account_id ?? unit?.eb_rr_number ?? '');
-    setEditWaterReference(defaultWaterRef);
-    setEditMotorBill(String(defaultMotor));
-    setEditOthersAmount(String(defaultOthers));
+    setEditEbCollectionMode(resolvedMode);
+    setEditEbPaidDate(
+      resolvedMode === 'Unpaid'
+        ? ''
+        : inv.eb_paid_date
+          ? String(inv.eb_paid_date).slice(0, 10)
+          : todayIso
+    );
     setEditError(null);
   };
 
@@ -467,27 +441,31 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
     [invoices, editingInvoiceId]
   );
 
+  const editingBreakdown = useMemo(
+    () => (editingInvoice ? getInvoiceBreakdown(editingInvoice) : null),
+    [editingInvoice]
+  );
+
+  const editingUnit = useMemo(
+    () =>
+      editingInvoice
+        ? units.find((u) => u.unit_id === editingInvoice.unit_id) || null
+        : null,
+    [units, editingInvoice]
+  );
+
   const editPreviewTotalPayable = useMemo(() => {
-    if (!editingInvoice) return 0;
-    const motorVal = Math.max(0, Math.round(Number(editMotorBill) || 0));
-    const othersVal = Math.max(0, Math.round(Number(editOthersAmount) || 0));
+    if (!editingInvoice || !editingBreakdown) return 0;
     return (
-      editingInvoice.rent_amount +
-      editingInvoice.tenant_cleaning_fee +
-      motorVal +
-      othersVal +
-      editingInvoice.water_amount +
-      (editEbPaidToOwner ? editingInvoice.eb_amount : 0)
+      editingBreakdown.totalAmount +
+      (editEbCollectionMode === 'Paid to Owner' ? editingBreakdown.eb : 0)
     );
-  }, [editingInvoice, editEbPaidToOwner, editMotorBill, editOthersAmount]);
+  }, [editingInvoice, editingBreakdown, editEbCollectionMode]);
 
   const handleSaveStatusUpdate = (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingInvoice || editingInvoice.is_locked) return;
     setEditError(null);
-
-    const motorVal = Math.max(0, Math.round(Number(editMotorBill) || 0));
-    const othersVal = Math.max(0, Math.round(Number(editOthersAmount) || 0));
 
     let nextPaid = 0;
     if (editStatus === 'Unpaid') {
@@ -523,26 +501,17 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
         : Math.max(0, editPreviewTotalPayable - nextPaid);
     const nextLocked = isInvoiceLockedStatus(editStatus);
     const todayIso = new Date().toISOString().slice(0, 10);
-    const nextTotalBillValue =
-      editingInvoice.rent_amount +
-      editingInvoice.tenant_cleaning_fee +
-      motorVal +
-      othersVal +
-      editingInvoice.water_amount +
-      editingInvoice.eb_amount;
+    const nextEbPaidToOwner = editEbCollectionMode === 'Paid to Owner';
+    const nextEbPaidDate =
+      editEbCollectionMode === 'Unpaid'
+        ? null
+        : editEbPaidDate.trim() || todayIso;
 
     const updated: InvoiceRecord = {
       ...editingInvoice,
-      eb_paid_to_owner: editEbPaidToOwner,
-      building_maintenance_share: Math.max(
-        0,
-        motorVal + othersVal - (editingInvoice.carried_forward_balance || 0)
-      ),
-      keb_account_id: editKebAccountId.trim(),
-      water_reference: editWaterReference.trim(),
-      motor_bill_amount: motorVal,
-      others_amount: othersVal,
-      total_bill_value: nextTotalBillValue,
+      eb_collection_mode: editEbCollectionMode,
+      eb_paid_to_owner: nextEbPaidToOwner,
+      eb_paid_date: nextEbPaidDate,
       total_payable_to_owner: editPreviewTotalPayable,
       amount_paid: nextPaid,
       balance_due: nextBalance,
@@ -1030,14 +999,21 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
                               {formatINR(b.eb)}
                             </div>
                             <span
-                              className={`mt-0.5 inline-block rounded px-1.5 py-0.5 text-[10px] font-bold ${
-                                inv.eb_paid_to_owner
-                                  ? 'bg-emerald-50 text-[#3E8E41]'
-                                  : 'bg-gray-100 text-gray-700'
+                              className={`mt-0.5 inline-block rounded border px-1.5 py-0.5 text-[10px] font-bold ${
+                                b.ebCollectionMode === 'Paid to Owner'
+                                  ? 'border-emerald-200 bg-emerald-50 text-[#3E8E41]'
+                                  : b.ebCollectionMode === 'Paid Directly'
+                                    ? 'border-gray-200 bg-gray-100 text-gray-700'
+                                    : 'border-amber-200 bg-amber-50 text-amber-800'
                               }`}
                             >
-                              {b.ebModeLabel}
+                              {b.ebCollectionMode}
                             </span>
+                            {b.ebPaidDateLabel && (
+                              <div className="mt-0.5 text-[10px] font-mono text-gray-500">
+                                {b.ebPaidDateLabel}
+                              </div>
+                            )}
                           </td>
                           <td className="py-2.5 px-3 whitespace-nowrap">
                             <span
@@ -1226,15 +1202,24 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
                             {formatINR(inv.eb_amount)}
                           </div>
                         </div>
-                        <span
-                          className={`inline-flex items-center rounded-lg border px-2 py-1 text-[10px] font-bold ${
-                            inv.eb_paid_to_owner
-                              ? 'border-emerald-200 bg-emerald-50 text-[#3E8E41]'
-                              : 'border-gray-200 bg-white text-gray-700'
-                          }`}
-                        >
-                          EB: {b.ebModeLabel}
-                        </span>
+                        <div className="text-right">
+                          <span
+                            className={`inline-flex items-center rounded-lg border px-2 py-1 text-[10px] font-bold ${
+                              b.ebCollectionMode === 'Paid to Owner'
+                                ? 'border-emerald-200 bg-emerald-50 text-[#3E8E41]'
+                                : b.ebCollectionMode === 'Paid Directly'
+                                  ? 'border-gray-200 bg-white text-gray-700'
+                                  : 'border-amber-200 bg-amber-50 text-amber-800'
+                            }`}
+                          >
+                            EB: {b.ebCollectionMode}
+                          </span>
+                          {b.ebPaidDateLabel && (
+                            <div className="mt-0.5 text-[10px] font-mono text-gray-500">
+                              EB Paid: {b.ebPaidDateLabel}
+                            </div>
+                          )}
+                        </div>
                       </div>
                     </div>
 
@@ -1346,35 +1331,155 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
             </div>
 
             <form onSubmit={handleSaveStatusUpdate} className="space-y-4">
-              {/* EB Collection Mode per Invoice */}
-              <div className="rounded-xl border border-gray-200 bg-gray-50 p-3 space-y-2">
+              {/* Read-Only Invoice Image Breakdown Summary */}
+              {editingBreakdown && (
+                <div className="rounded-xl border border-gray-200 bg-gray-50/90 p-3 space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-bold text-[#0f172a]">
+                      Invoice Breakdown (Read-Only)
+                    </span>
+                    <span className="inline-flex items-center gap-1 rounded-md border border-gray-200 bg-white px-2 py-0.5 text-[10px] font-semibold text-gray-500">
+                      <Lock className="w-2.5 h-2.5" />
+                      <span>Locked</span>
+                    </span>
+                  </div>
+
+                  {(() => {
+                    const waterRefText =
+                      editingInvoice.water_reference &&
+                      editingInvoice.water_reference.trim() !== ''
+                        ? editingInvoice.water_reference.trim()
+                        : buildDefaultWaterReference({
+                            waterRr1: editingUnit?.water_rr_number,
+                            waterRr2: editingUnit?.water_rr_number2,
+                            prev1: editingInvoice.water_prev_1,
+                            curr1: editingInvoice.water_curr_1,
+                            prev2: editingInvoice.water_prev_2,
+                            curr2: editingInvoice.water_curr_2,
+                          });
+                    const kebAccIdText = (
+                      editingInvoice.keb_account_id ||
+                      editingUnit?.eb_rr_number ||
+                      ''
+                    ).trim();
+
+                    return (
+                      <div className="rounded-lg border border-gray-200 bg-white divide-y divide-gray-100 text-xs">
+                        <div className="flex items-center justify-between px-2.5 py-1.5">
+                          <span className="text-gray-600">Rent</span>
+                          <span className="font-mono tabular-nums font-semibold text-[#0f172a]">
+                            {formatINR(editingBreakdown.rent)}
+                          </span>
+                        </div>
+                        <div className="flex items-start justify-between gap-2 px-2.5 py-1.5">
+                          <div className="min-w-0">
+                            <div className="text-gray-600">Water Bill</div>
+                            {waterRefText && (
+                              <div className="text-[10px] font-mono text-gray-400 break-all">
+                                {waterRefText}
+                              </div>
+                            )}
+                          </div>
+                          <span className="font-mono tabular-nums font-semibold text-[#0f172a] shrink-0">
+                            {formatINR(editingBreakdown.water)}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between px-2.5 py-1.5">
+                          <span className="text-gray-600">Maintenance (Cleaning)</span>
+                          <span className="font-mono tabular-nums font-semibold text-[#0f172a]">
+                            {formatINR(editingBreakdown.cleaning)}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between px-2.5 py-1.5">
+                          <span className="text-gray-600">Motor Bill</span>
+                          <span className="font-mono tabular-nums font-semibold text-[#0f172a]">
+                            {formatINR(editingBreakdown.motor)}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between px-2.5 py-1.5">
+                          <span className="text-gray-600">Others</span>
+                          <span className="font-mono tabular-nums font-semibold text-[#0f172a]">
+                            {formatINR(editingBreakdown.others)}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between px-2.5 py-2 bg-emerald-50/70 font-bold">
+                          <span className="text-[#0f172a]">Total Amount</span>
+                          <span className="font-mono tabular-nums text-[#3E8E41]">
+                            {formatINR(editingBreakdown.totalAmount)}
+                          </span>
+                        </div>
+                        <div className="flex items-start justify-between gap-2 px-2.5 py-1.5">
+                          <div className="min-w-0">
+                            <div className="text-gray-600">KEB (BESCOM) Bill</div>
+                            <div className="text-[10px] font-mono text-gray-400">
+                              Acc ID: {kebAccIdText || 'N/A'}
+                            </div>
+                          </div>
+                          <span className="font-mono tabular-nums font-semibold text-[#0f172a] shrink-0">
+                            {formatINR(editingBreakdown.eb)}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })()}
+                </div>
+              )}
+
+              {/* EB Collection Mode (3 options) & Conditional Paid Date */}
+              <div className="rounded-xl border border-gray-200 bg-gray-50 p-3 space-y-2.5">
                 <div className="text-xs font-bold text-[#0f172a]">
                   EB Collection Mode (Unit EB: {formatINR(editingInvoice.eb_amount)})
                 </div>
-                <div className="grid grid-cols-2 gap-1.5 p-1 rounded-lg bg-gray-200/80">
-                  <button
-                    type="button"
-                    onClick={() => setEditEbPaidToOwner(true)}
-                    className={`py-2 px-2.5 rounded-md text-xs font-bold cursor-pointer ${
-                      editEbPaidToOwner
-                        ? 'bg-white text-[#3E8E41] shadow-xs'
-                        : 'text-gray-600'
-                    }`}
-                  >
-                    Paid to Owner
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setEditEbPaidToOwner(false)}
-                    className={`py-2 px-2.5 rounded-md text-xs font-bold cursor-pointer ${
-                      !editEbPaidToOwner
-                        ? 'bg-white text-[#0f172a] shadow-xs'
-                        : 'text-gray-600'
-                    }`}
-                  >
-                    Paid Directly
-                  </button>
+                <div className="grid grid-cols-3 gap-1.5 p-1 rounded-lg bg-gray-200/80">
+                  {(['Unpaid', 'Paid to Owner', 'Paid Directly'] as const).map(
+                    (mode) => (
+                      <button
+                        key={mode}
+                        type="button"
+                        onClick={() => {
+                          setEditEbCollectionMode(mode);
+                          if (mode === 'Unpaid') {
+                            setEditEbPaidDate('');
+                          } else {
+                            setEditEbPaidDate((prev) =>
+                              prev.trim() ? prev : new Date().toISOString().slice(0, 10)
+                            );
+                          }
+                        }}
+                        className={`py-2 px-1.5 rounded-md text-[11px] font-bold cursor-pointer transition-colors ${
+                          editEbCollectionMode === mode
+                            ? mode === 'Paid to Owner'
+                              ? 'bg-white text-[#3E8E41] shadow-xs'
+                              : mode === 'Paid Directly'
+                                ? 'bg-white text-[#0f172a] shadow-xs'
+                                : 'bg-white text-amber-700 shadow-xs'
+                            : 'text-gray-600 hover:text-[#0f172a]'
+                        }`}
+                      >
+                        {mode}
+                      </button>
+                    )
+                  )}
                 </div>
+
+                {(editEbCollectionMode === 'Paid to Owner' ||
+                  editEbCollectionMode === 'Paid Directly') && (
+                  <div className="pt-1">
+                    <label
+                      htmlFor="eb-paid-date-input"
+                      className="block text-[11px] font-semibold text-gray-700 mb-1"
+                    >
+                      EB Paid Date
+                    </label>
+                    <input
+                      id="eb-paid-date-input"
+                      type="date"
+                      value={editEbPaidDate}
+                      onChange={(e) => setEditEbPaidDate(e.target.value)}
+                      className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs font-mono text-[#0f172a] min-h-[40px]"
+                    />
+                  </div>
+                )}
               </div>
 
               {/* 4 Exact Payment Statuses */}
@@ -1441,63 +1546,6 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
                   />
                 </div>
               )}
-
-              {/* Invoice Image Breakdown Overrides */}
-              <div className="rounded-xl border border-gray-200 bg-gray-50/80 p-3 space-y-2.5">
-                <div className="text-xs font-bold text-[#0f172a]">
-                  Invoice Image Breakdown Details
-                </div>
-                <div className="grid grid-cols-2 gap-2.5">
-                  <div>
-                    <label className="block text-[11px] font-semibold text-gray-600 mb-1">
-                      Motor Bill (INR)
-                    </label>
-                    <input
-                      type="number"
-                      min={0}
-                      value={editMotorBill}
-                      onChange={(e) => setEditMotorBill(e.target.value)}
-                      className="w-full rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-xs font-mono font-bold text-[#0f172a] min-h-[38px]"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[11px] font-semibold text-gray-600 mb-1">
-                      Others (INR)
-                    </label>
-                    <input
-                      type="number"
-                      min={0}
-                      value={editOthersAmount}
-                      onChange={(e) => setEditOthersAmount(e.target.value)}
-                      className="w-full rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-xs font-mono font-bold text-[#0f172a] min-h-[38px]"
-                    />
-                  </div>
-                </div>
-                <div>
-                  <label className="block text-[11px] font-semibold text-gray-600 mb-1">
-                    KEB Acc ID
-                  </label>
-                  <input
-                    type="text"
-                    value={editKebAccountId}
-                    onChange={(e) => setEditKebAccountId(e.target.value)}
-                    placeholder="e.g., 7732158000"
-                    className="w-full rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-xs font-mono text-[#0f172a] min-h-[38px]"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[11px] font-semibold text-gray-600 mb-1">
-                    Water Bill Meter Reference
-                  </label>
-                  <input
-                    type="text"
-                    value={editWaterReference}
-                    onChange={(e) => setEditWaterReference(e.target.value)}
-                    placeholder="e.g., (836436-06/20)(1207398-05/22)"
-                    className="w-full rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-xs font-mono text-[#0f172a] min-h-[38px]"
-                  />
-                </div>
-              </div>
 
               {/* Live Totals Summary */}
               <div className="rounded-xl border border-gray-200 bg-gray-50 p-3.5 space-y-1.5 text-xs">
@@ -1690,11 +1738,17 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
                     <div className="text-gray-700 font-medium">
                       Unit Electricity (EB)
                     </div>
-                    <div className="text-[11px] text-gray-500">
-                      {activeModalInvoice.eb_paid_to_owner
-                        ? 'Paid to Owner'
-                        : 'Paid Directly to Utility Provider'}
-                    </div>
+                    {(() => {
+                      const activeBreakdown = getInvoiceBreakdown(activeModalInvoice);
+                      return (
+                        <div className="text-[11px] text-gray-500">
+                          {activeBreakdown.ebCollectionMode}
+                          {activeBreakdown.ebPaidDateLabel
+                            ? ` · Paid: ${activeBreakdown.ebPaidDateLabel}`
+                            : ''}
+                        </div>
+                      );
+                    })()}
                   </div>
                   <span className="font-mono tabular-nums font-semibold text-[#0f172a]">
                     {formatINR(activeModalInvoice.eb_amount)}
@@ -1971,9 +2025,14 @@ export const InvoicesView: React.FC<InvoicesViewProps> = ({
                   Unit Electricity (EB)
                 </td>
                 <td className="border border-slate-300 py-2 px-3">
-                  {printableInvoice.eb_paid_to_owner
-                    ? 'Payable to Owner'
-                    : 'Paid Directly to Utility Provider'}
+                  {(() => {
+                    const printBreakdown = getInvoiceBreakdown(printableInvoice);
+                    return `${printBreakdown.ebCollectionMode}${
+                      printBreakdown.ebPaidDateLabel
+                        ? ` (${printBreakdown.ebPaidDateLabel})`
+                        : ''
+                    }`;
+                  })()}
                 </td>
                 <td className="border border-slate-300 py-2 px-3 text-right font-mono">
                   {formatINR(printableInvoice.eb_amount)}

@@ -90,7 +90,9 @@ export function exportInvoicesSummaryPdf({
       formatPdfINR(b.motor),
       formatPdfINR(b.others),
       formatPdfINR(b.totalAmount),
-      `${formatPdfINR(b.eb)}\n(${b.ebModeLabel})`,
+      `${formatPdfINR(b.eb)}\n${b.ebCollectionMode}${
+        b.ebPaidDateLabel ? `\n${b.ebPaidDateLabel}` : ''
+      }`,
       inv.payment_status,
       b.paidDateLabel || '-',
     ];

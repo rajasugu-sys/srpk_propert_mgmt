@@ -1,4 +1,4 @@
-import type { InvoiceRecord, TenantRecord } from '../types/estate.ts';
+import type { EbCollectionMode, InvoiceRecord, TenantRecord } from '../types/estate.ts';
 
 export function formatINR(amount: number): string {
   return new Intl.NumberFormat('en-IN', {
@@ -88,6 +88,55 @@ export function isInvoiceLockedStatus(status: InvoiceRecord['payment_status']): 
   return status === 'Partially Paid & Closed' || status === 'Paid & Closed';
 }
 
+export function getCurrentCycleMonthKey(referenceDate: Date = new Date()): string {
+  const y = referenceDate.getFullYear();
+  const m = String(referenceDate.getMonth() + 1).padStart(2, '0');
+  return `${y}-${m}`;
+}
+
+export function isInvoiceProtectedFromAutoSync(
+  inv: InvoiceRecord,
+  currentCycleMonth: string = getCurrentCycleMonthKey()
+): boolean {
+  if (inv.is_locked || isInvoiceLockedStatus(inv.payment_status)) return true;
+  if (inv.payment_status !== 'Unpaid') return true;
+  if ((inv.amount_paid || 0) > 0) return true;
+  if (inv.paid_at && String(inv.paid_at).trim() !== '') return true;
+  if (inv.billing_month && inv.billing_month < currentCycleMonth) return true;
+  return false;
+}
+
+export function resolveEbCollectionMode(
+  inv: Pick<
+    InvoiceRecord,
+    | 'eb_collection_mode'
+    | 'eb_paid_to_owner'
+    | 'eb_paid_date'
+    | 'payment_status'
+    | 'is_locked'
+    | 'amount_paid'
+  >
+): EbCollectionMode {
+  if (
+    inv.eb_collection_mode === 'Unpaid' ||
+    inv.eb_collection_mode === 'Paid to Owner' ||
+    inv.eb_collection_mode === 'Paid Directly'
+  ) {
+    return inv.eb_collection_mode;
+  }
+  if (inv.eb_paid_date && String(inv.eb_paid_date).trim() !== '') {
+    return inv.eb_paid_to_owner ? 'Paid to Owner' : 'Paid Directly';
+  }
+  if (
+    inv.is_locked ||
+    isInvoiceLockedStatus(inv.payment_status) ||
+    (inv.amount_paid || 0) > 0
+  ) {
+    return inv.eb_paid_to_owner ? 'Paid to Owner' : 'Paid Directly';
+  }
+  return 'Unpaid';
+}
+
 export interface InvoiceBreakdownSummary {
   rent: number;
   water: number;
@@ -96,7 +145,9 @@ export interface InvoiceBreakdownSummary {
   others: number;
   totalAmount: number;
   eb: number;
-  ebModeLabel: 'Owner' | 'Direct';
+  ebCollectionMode: EbCollectionMode;
+  ebModeLabel: 'Unpaid' | 'Owner' | 'Direct';
+  ebPaidDateLabel: string;
   paidDateLabel: string;
 }
 
@@ -131,7 +182,15 @@ export function getInvoiceBreakdown(inv: InvoiceRecord): InvoiceBreakdownSummary
 
   const totalAmount = rent + water + cleaning + motor + others;
   const eb = Math.round(inv.eb_amount || 0);
-  const ebModeLabel: 'Owner' | 'Direct' = inv.eb_paid_to_owner ? 'Owner' : 'Direct';
+  const ebCollectionMode = resolveEbCollectionMode(inv);
+  const ebModeLabel: 'Unpaid' | 'Owner' | 'Direct' =
+    ebCollectionMode === 'Paid to Owner'
+      ? 'Owner'
+      : ebCollectionMode === 'Paid Directly'
+        ? 'Direct'
+        : 'Unpaid';
+  const ebPaidDateLabel =
+    ebCollectionMode === 'Unpaid' ? '' : formatInvoicePaidDate(inv.eb_paid_date);
   const paidDateLabel = formatInvoicePaidDate(inv.paid_at);
 
   return {
@@ -142,7 +201,9 @@ export function getInvoiceBreakdown(inv: InvoiceRecord): InvoiceBreakdownSummary
     others,
     totalAmount,
     eb,
+    ebCollectionMode,
     ebModeLabel,
+    ebPaidDateLabel,
     paidDateLabel,
   };
 }

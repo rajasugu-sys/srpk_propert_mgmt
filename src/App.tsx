@@ -78,8 +78,11 @@ import {
 import {
   buildDefaultWaterReference,
   calculateLeaseEndDate,
+  getCurrentCycleMonthKey,
   getTenureRemainingInfo,
   isInvoiceLockedStatus,
+  isInvoiceProtectedFromAutoSync,
+  resolveEbCollectionMode,
 } from './utils/billingEngine';
 
 const LOCAL_STORAGE_KEY = 'srpk_hierarchy_estate_v5';
@@ -207,6 +210,30 @@ function migrateInvoiceRecord(rawInv: Record<string, unknown>): InvoiceRecord {
     }
   }
 
+  const rawMode = rawInv.eb_collection_mode ?? rawInv.ebCollectionMode;
+  const rawEbPaidDate = rawInv.eb_paid_date ?? rawInv.ebPaidDate;
+  const rawEbPaidToOwner = toBool(rawInv.eb_paid_to_owner, false);
+  const ebCollectionMode = resolveEbCollectionMode({
+    eb_collection_mode:
+      rawMode === 'Unpaid' ||
+      rawMode === 'Paid to Owner' ||
+      rawMode === 'Paid Directly'
+        ? rawMode
+        : undefined,
+    eb_paid_to_owner: rawEbPaidToOwner,
+    eb_paid_date: rawEbPaidDate ? String(rawEbPaidDate) : null,
+    payment_status: paymentStatus,
+    is_locked: isLocked,
+    amount_paid: amountPaid,
+  });
+  const ebPaidToOwner = ebCollectionMode === 'Paid to Owner';
+  const ebPaidDate =
+    ebCollectionMode === 'Unpaid'
+      ? null
+      : rawEbPaidDate && String(rawEbPaidDate).trim() !== ''
+        ? String(rawEbPaidDate).trim()
+        : null;
+
   return {
     ...(rawInv as unknown as InvoiceRecord),
     rent_amount: toNum(rawInv.rent_amount, 0),
@@ -216,7 +243,9 @@ function migrateInvoiceRecord(rawInv: Record<string, unknown>): InvoiceRecord {
     building_maintenance_share: toNum(rawInv.building_maintenance_share, 0),
     building_maintenance_items: bldgItems,
     eb_amount: toNum(rawInv.eb_amount, 0),
-    eb_paid_to_owner: toBool(rawInv.eb_paid_to_owner, true),
+    eb_paid_to_owner: ebPaidToOwner,
+    eb_collection_mode: ebCollectionMode,
+    eb_paid_date: ebPaidDate,
     water_prev_1: toNum(rawInv.water_prev_1, 0),
     water_curr_1: toNum(rawInv.water_curr_1, 0),
     water_prev_2: toNum(rawInv.water_prev_2, 0),
@@ -321,17 +350,19 @@ function loadLocalDataset(): EstateDataset {
 }
 
 /**
- * Recalculates any open (Unpaid / Partially Paid) invoices from current upstream
- * properties, units, tenants, building maintenance bills, utility readings, and prior arrears.
- * NEVER touches locked invoices (Partially Paid & Closed / Paid & Closed).
+ * Recalculates ONLY Unpaid invoices in the current or upcoming billing cycles
+ * (>= current YYYY-MM) from upstream properties, units, tenants, building maintenance bills,
+ * utility readings, and prior arrears.
+ * STRICTLY freezes Paid, Partially Paid, Locked, and past/historical invoices.
  */
 function recalculateOpenInvoices(
   state: EstateDataset,
   filterFn: (inv: InvoiceRecord) => boolean
 ): { nextInvoices: InvoiceRecord[]; updatedInvoices: InvoiceRecord[] } {
+  const currentCycleMonth = getCurrentCycleMonthKey();
   const updatedInvoices: InvoiceRecord[] = [];
   const nextInvoices = state.invoices.map((inv) => {
-    if (inv.is_locked || isInvoiceLockedStatus(inv.payment_status)) {
+    if (isInvoiceProtectedFromAutoSync(inv, currentCycleMonth)) {
       return inv;
     }
     if (!filterFn(inv)) return inv;
@@ -382,12 +413,17 @@ function recalculateOpenInvoices(
     const prev2 = reading?.prev_reading_2 ?? inv.water_prev_2;
     const curr2 = reading?.curr_reading_2 ?? inv.water_curr_2;
     const netUnits = reading?.net_consumption ?? inv.water_net_units;
-    const waterAmount = reading
-      ? Math.round(reading.net_consumption * waterRate)
-      : Math.round(netUnits * waterRate);
+    const waterAmount = Math.round(netUnits * waterRate);
 
     const ebAmount = reading?.eb_bill_amount ?? inv.eb_amount;
-    const ebPaidToOwner = inv.eb_paid_to_owner;
+    const ebCollectionMode = resolveEbCollectionMode(inv);
+    const ebPaidToOwner = ebCollectionMode === 'Paid to Owner';
+    const ebPaidDate =
+      ebCollectionMode === 'Unpaid'
+        ? null
+        : inv.eb_paid_date
+          ? String(inv.eb_paid_date)
+          : null;
 
     const priorInvoices = state.invoices
       .filter(
@@ -426,6 +462,15 @@ function recalculateOpenInvoices(
       houseMaint && unitCount > 0 ? Math.round(houseMaint.common_eb_amount / unitCount) : 0;
     const othersFromMaint = Math.max(0, bldgShare - motorFromMaint) + carriedForward;
 
+    const rebuiltWaterRef = buildDefaultWaterReference({
+      waterRr1: unit?.water_rr_number,
+      waterRr2: unit?.water_rr_number2,
+      prev1,
+      curr1,
+      prev2,
+      curr2,
+    });
+
     const recalced: InvoiceRecord = {
       ...inv,
       property_name: property?.property_name ?? inv.property_name,
@@ -442,6 +487,9 @@ function recalculateOpenInvoices(
       building_maintenance_share: bldgShare,
       building_maintenance_items: bldgItems,
       eb_amount: ebAmount,
+      eb_collection_mode: ebCollectionMode,
+      eb_paid_to_owner: ebPaidToOwner,
+      eb_paid_date: ebPaidDate,
       water_prev_1: prev1,
       water_curr_1: curr1,
       water_prev_2: prev2,
@@ -454,19 +502,10 @@ function recalculateOpenInvoices(
       total_payable_to_owner: totalPayableToOwner,
       amount_paid: cappedPaid,
       balance_due: balanceDue,
-      keb_account_id: inv.keb_account_id || unit?.eb_rr_number || '',
-      water_reference:
-        inv.water_reference ||
-        buildDefaultWaterReference({
-          waterRr1: unit?.water_rr_number,
-          waterRr2: unit?.water_rr_number2,
-          prev1,
-          curr1,
-          prev2,
-          curr2,
-        }),
-      motor_bill_amount: houseMaint ? motorFromMaint : inv.motor_bill_amount ?? 0,
-      others_amount: houseMaint ? othersFromMaint : inv.others_amount ?? carriedForward,
+      keb_account_id: unit?.eb_rr_number || inv.keb_account_id || '',
+      water_reference: rebuiltWaterRef || inv.water_reference || '',
+      motor_bill_amount: motorFromMaint,
+      others_amount: othersFromMaint,
     };
 
     updatedInvoices.push(recalced);
@@ -1125,17 +1164,25 @@ export default function App() {
 
   // OLTP Mutation Handlers — Properties (Houses)
   const handleSaveProperty = (property: PropertyHouse, isNew: boolean) => {
+    const prevState = datasetRef.current;
     const nextProperties = isNew
-      ? [...datasetRef.current.properties, property]
-      : datasetRef.current.properties.map((p) =>
+      ? [...prevState.properties, property]
+      : prevState.properties.map((p) =>
           p.property_id === property.property_id ? property : p
         );
+    const tempState = { ...prevState, properties: nextProperties };
+    const { nextInvoices, updatedInvoices } = recalculateOpenInvoices(
+      tempState,
+      (inv) => inv.property_id === property.property_id
+    );
 
-    setDataset((prev) => ({
-      ...prev,
-      properties: nextProperties,
-    }));
-    void syncTableDirect('Properties', nextProperties);
+    setDataset({ ...tempState, invoices: nextInvoices });
+    void (async () => {
+      await syncTableDirect('Properties', nextProperties);
+      if (updatedInvoices.length > 0) {
+        await syncTableDirect('Invoices', nextInvoices);
+      }
+    })();
   };
 
   const handleDeleteProperty = (propertyId: string) => {
@@ -1222,19 +1269,61 @@ export default function App() {
 
   const handleUpdateTenant = (updatedTenant: TenantRecord) => {
     const prevState = datasetRef.current;
+    const currentCycleMonth = getCurrentCycleMonthKey();
     const nextTenants = prevState.tenants.map((t) =>
       t.id === updatedTenant.id ? updatedTenant : t
     );
-    const tempState = { ...prevState, tenants: nextTenants };
+
+    // Sync current & upcoming UtilityReadings water_rate when tenant tariff changes,
+    // strictly skipping any billing_month that already has a paid/locked/past invoice.
+    const protectedMonthKeys = new Set(
+      prevState.invoices
+        .filter((inv) => isInvoiceProtectedFromAutoSync(inv, currentCycleMonth))
+        .map((inv) => `${inv.unit_id}::${inv.billing_month}`)
+    );
+
+    let readingsChanged = false;
+    const nextReadings = prevState.utilityReadings.map((r) => {
+      if (r.unit_id !== updatedTenant.unit_id) return r;
+      if (r.billing_month < currentCycleMonth) return r;
+      if (protectedMonthKeys.has(`${r.unit_id}::${r.billing_month}`)) return r;
+      const nextWaterAmount = Math.round(r.net_consumption * updatedTenant.water_charge);
+      if (
+        r.water_rate === updatedTenant.water_charge &&
+        r.water_bill_amount === nextWaterAmount
+      ) {
+        return r;
+      }
+      readingsChanged = true;
+      return {
+        ...r,
+        water_rate: updatedTenant.water_charge,
+        water_bill_amount: nextWaterAmount,
+      };
+    });
+
+    const tempState = {
+      ...prevState,
+      tenants: nextTenants,
+      utilityReadings: nextReadings,
+    };
     const { nextInvoices, updatedInvoices } = recalculateOpenInvoices(
       tempState,
       (inv) => inv.tenant_id === updatedTenant.id
     );
 
     setDataset({ ...tempState, invoices: nextInvoices });
+    if (updatedInvoices.length > 0) {
+      setPullFeedback(
+        `Updated ${updatedTenant.full_name} and auto-synced ${updatedInvoices.length} unpaid/upcoming bill(s) (paid & past bills preserved).`
+      );
+    }
 
     void (async () => {
       await syncTableDirect('Tenants', nextTenants);
+      if (readingsChanged) {
+        await syncTableDirect('UtilityReadings', nextReadings);
+      }
       if (updatedInvoices.length > 0) {
         await syncTableDirect('Invoices', nextInvoices);
       }
@@ -1300,6 +1389,11 @@ export default function App() {
     );
 
     setDataset({ ...tempState, invoices: nextInvoices });
+    if (updatedInvoices.length > 0) {
+      setPullFeedback(
+        `Maintenance saved and auto-synced to ${updatedInvoices.length} unpaid/upcoming bill(s) (paid & past bills frozen).`
+      );
+    }
 
     void (async () => {
       await syncTableDirect('BuildingMaintenance', nextBills);
@@ -1338,6 +1432,11 @@ export default function App() {
     );
 
     setDataset({ ...tempState, invoices: nextInvoices });
+    if (updatedInvoices.length > 0) {
+      setPullFeedback(
+        `Meter reading saved and auto-synced to ${updatedInvoices.length} unpaid/upcoming bill(s) (paid & past bills frozen).`
+      );
+    }
 
     void (async () => {
       await syncTableDirect('UtilityReadings', nextReadings);
@@ -1383,6 +1482,11 @@ export default function App() {
     );
 
     setDataset({ ...tempState, invoices: nextInvoices });
+    if (updatedInvoices.length > 0) {
+      setPullFeedback(
+        `Meter readings saved and auto-synced to ${updatedInvoices.length} unpaid/upcoming bill(s) (paid & past bills frozen).`
+      );
+    }
 
     void (async () => {
       await syncTableDirect('UtilityReadings', nextReadings);

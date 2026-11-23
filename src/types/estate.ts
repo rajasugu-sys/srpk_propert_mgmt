@@ -6,6 +6,7 @@ export type PaymentStatus =
   | 'Partially Paid & Closed'
   | 'Paid & Closed';
 export type UtilityProvider = 'BESCOM' | 'TNEB';
+export type EbCollectionMode = 'Unpaid' | 'Paid to Owner' | 'Paid Directly';
 
 export interface PropertyHouse {
   property_id: string;
@@ -126,6 +127,8 @@ export interface InvoiceRecord {
   building_maintenance_items: Array<{ name: string; amount: number }>;
   eb_amount: number;
   eb_paid_to_owner: boolean;
+  eb_collection_mode?: EbCollectionMode;
+  eb_paid_date?: string | null;
   water_prev_1: number;
   water_curr_1: number;
   water_prev_2: number;

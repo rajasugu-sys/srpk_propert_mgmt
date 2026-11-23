@@ -128,6 +128,8 @@ export const TAB_HEADERS: Record<SyncTable, string[]> = {
     'building_maintenance_items',
     'eb_amount',
     'eb_paid_to_owner',
+    'eb_collection_mode',
+    'eb_paid_date',
     'water_prev_1',
     'water_curr_1',
     'water_prev_2',

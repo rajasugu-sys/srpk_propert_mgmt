@@ -3,8 +3,10 @@ import {
   ArrowLeft,
   Check,
   Copy,
+  FileDown,
   IndianRupee,
   Landmark,
+  LayoutGrid,
   MessageSquare,
   Paintbrush,
   Pencil,
@@ -13,6 +15,7 @@ import {
   Search,
   Share2,
   ShieldCheck,
+  Table2,
   Trash2,
   TrendingDown,
   TrendingUp,
@@ -33,6 +36,10 @@ import {
   formatWhatsAppPnLReport,
   normalizeWhatsAppDigits,
 } from '../utils/billingEngine';
+import { exportExpensesSummaryPdf } from '../utils/expensePdfExport';
+
+const EXPENSES_VIEW_MODE_KEY = 'srpk_expenses_view_mode_v1';
+type ExpenseViewMode = 'card' | 'table';
 
 interface ExpensesViewProps {
   properties: PropertyHouse[];
@@ -106,6 +113,24 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
 }) => {
   const [houseFilter, setHouseFilter] = useState<string>('ALL');
   const [searchQuery, setSearchQuery] = useState<string>('');
+  const [viewMode, setViewMode] = useState<ExpenseViewMode>(() => {
+    try {
+      const saved = localStorage.getItem(EXPENSES_VIEW_MODE_KEY);
+      return saved === 'table' ? 'table' : 'card';
+    } catch {
+      return 'card';
+    }
+  });
+
+  const handleChangeViewMode = (mode: ExpenseViewMode) => {
+    setViewMode(mode);
+    try {
+      localStorage.setItem(EXPENSES_VIEW_MODE_KEY, mode);
+    } catch {
+      // Ignore storage write issues
+    }
+  };
+
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [showShareModal, setShowShareModal] = useState<boolean>(false);
   const [copiedReport, setCopiedReport] = useState<boolean>(false);
@@ -553,7 +578,78 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
           />
         </div>
 
-        {/* Stacked Expense Transaction Cards */}
+        {/* View Mode Switcher (Card vs. Table) + Export PDF Action */}
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-gray-100 bg-gray-50/80 px-3 py-2">
+          <div className="text-xs font-bold text-[#0f172a]">
+            {visibleTransactions.length} Expense{visibleTransactions.length === 1 ? '' : 's'}
+          </div>
+
+          <div className="flex items-center gap-2">
+            <div
+              className="inline-flex rounded-xl bg-gray-200/80 p-0.5"
+              role="group"
+              aria-label="Expense display view"
+            >
+              <button
+                type="button"
+                onClick={() => handleChangeViewMode('card')}
+                aria-pressed={viewMode === 'card'}
+                className={`inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-[11px] font-bold cursor-pointer transition-colors ${
+                  viewMode === 'card'
+                    ? 'bg-white text-[#3E8E41] shadow-2xs'
+                    : 'text-gray-600 hover:text-[#0f172a]'
+                }`}
+              >
+                <LayoutGrid className="w-3.5 h-3.5" />
+                <span>Card</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => handleChangeViewMode('table')}
+                aria-pressed={viewMode === 'table'}
+                className={`inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-[11px] font-bold cursor-pointer transition-colors ${
+                  viewMode === 'table'
+                    ? 'bg-white text-[#3E8E41] shadow-2xs'
+                    : 'text-gray-600 hover:text-[#0f172a]'
+                }`}
+              >
+                <Table2 className="w-3.5 h-3.5" />
+                <span>Table</span>
+              </button>
+            </div>
+
+            <button
+              type="button"
+              disabled={visibleTransactions.length === 0}
+              onClick={() => {
+                const selectedHouseName =
+                  houseFilter === 'ALL'
+                    ? 'All Houses & General'
+                    : houseFilter === 'OTHER'
+                      ? 'General / Other'
+                      : properties.find((p) => p.property_id === houseFilter)
+                          ?.property_name || houseFilter;
+                const summaryParts = [
+                  `Period: ${formatBillingMonthLabel(billingMonth)}`,
+                  `House: ${selectedHouseName}`,
+                  searchQuery.trim() ? `Search: "${searchQuery.trim()}"` : null,
+                ].filter(Boolean);
+
+                exportExpensesSummaryPdf({
+                  expenses: visibleTransactions,
+                  filterSummary: summaryParts.join('  |  '),
+                  fileName: `SRKP-Expenses-${billingMonth}.pdf`,
+                });
+              }}
+              className="inline-flex items-center gap-1.5 rounded-xl bg-[#0f172a] px-3 py-1.5 text-[11px] font-bold text-white hover:bg-slate-800 disabled:opacity-45 disabled:cursor-not-allowed cursor-pointer min-h-[34px]"
+            >
+              <FileDown className="w-3.5 h-3.5 text-emerald-300" />
+              <span>Export PDF</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Expense List: Card View or Compact Tabular View */}
         {visibleTransactions.length === 0 ? (
           <div className="rounded-2xl border border-dashed border-gray-200 bg-gray-50/60 p-8 text-center space-y-2.5">
             <Receipt className="w-7 h-7 text-gray-400 mx-auto" />
@@ -570,6 +666,127 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
                 <span>Add First Expense</span>
               </button>
             )}
+          </div>
+        ) : viewMode === 'table' ? (
+          <div className="rounded-2xl border border-gray-200 bg-white shadow-xs overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[760px] border-collapse text-left text-xs">
+                <thead>
+                  <tr className="bg-[#3E8E41] text-white text-[11px] font-bold">
+                    <th className="py-2.5 px-3 whitespace-nowrap">Date</th>
+                    <th className="py-2.5 px-3 whitespace-nowrap">Category / Title</th>
+                    <th className="py-2.5 px-3 whitespace-nowrap">Property / Unit</th>
+                    <th className="py-2.5 px-3 text-right whitespace-nowrap">Amount</th>
+                    <th className="py-2.5 px-3 whitespace-nowrap">Notes / Description</th>
+                    <th className="py-2.5 px-3 text-right whitespace-nowrap">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {visibleTransactions.map((exp) => {
+                    const houseIdx = properties.findIndex(
+                      (p) => p.property_id === exp.house_id
+                    );
+                    return (
+                      <tr
+                        key={exp.id}
+                        className="hover:bg-emerald-50/35 transition-colors align-middle"
+                      >
+                        <td className="py-2.5 px-3 font-mono tabular-nums whitespace-nowrap text-gray-700">
+                          {exp.date}
+                        </td>
+                        <td className="py-2.5 px-3 whitespace-nowrap">
+                          <div className="font-bold text-[#0f172a]">{exp.category}</div>
+                          <div className="text-[10px] text-gray-400">
+                            by {exp.created_by}
+                          </div>
+                        </td>
+                        <td className="py-2.5 px-3 whitespace-nowrap">
+                          <span
+                            className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-bold ${getHousePillClasses(
+                              exp.house_id,
+                              houseIdx >= 0 ? houseIdx : 0
+                            )}`}
+                          >
+                            {exp.house_name}
+                          </span>
+                        </td>
+                        <td className="py-2.5 px-3 text-right font-mono tabular-nums whitespace-nowrap font-extrabold text-rose-600">
+                          -{formatINR(exp.amount)}
+                        </td>
+                        <td className="py-2.5 px-3 text-gray-700 max-w-[240px]">
+                          <div className="line-clamp-2 break-words">{exp.description}</div>
+                        </td>
+                        <td className="py-2.5 px-3 text-right whitespace-nowrap">
+                          {isReadOnly ? (
+                            <span className="text-[10px] text-gray-400">Read-Only</span>
+                          ) : confirmDeleteId === exp.id ? (
+                            <div className="inline-flex items-center justify-end gap-1">
+                              <button
+                                type="button"
+                                onClick={() => setConfirmDeleteId(null)}
+                                className="rounded-lg border border-gray-200 bg-white px-2 py-1 text-[10px] font-semibold text-gray-600 cursor-pointer"
+                              >
+                                Cancel
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  onDeleteExpense(exp.id);
+                                  setConfirmDeleteId(null);
+                                }}
+                                className="rounded-lg bg-rose-600 px-2 py-1 text-[10px] font-bold text-white hover:bg-rose-700 cursor-pointer"
+                              >
+                                Confirm
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="inline-flex items-center justify-end gap-1">
+                              <button
+                                type="button"
+                                onClick={() => openEditModal(exp)}
+                                className="flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 cursor-pointer"
+                                aria-label={`Edit ${exp.description}`}
+                                title="Edit Expense"
+                              >
+                                <Pencil className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setConfirmDeleteId(exp.id)}
+                                className="flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 bg-white text-rose-600 hover:bg-rose-50 cursor-pointer"
+                                aria-label={`Delete ${exp.description}`}
+                                title="Delete Expense"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+                <tfoot>
+                  {(() => {
+                    const totalVisible = visibleTransactions.reduce(
+                      (sum, exp) => sum + Math.round(exp.amount || 0),
+                      0
+                    );
+                    return (
+                      <tr className="bg-emerald-50/90 border-t-2 border-[#3E8E41]/30 font-extrabold text-[#0f172a]">
+                        <td className="py-2.5 px-3 whitespace-nowrap" colSpan={3}>
+                          TOTAL ({visibleTransactions.length})
+                        </td>
+                        <td className="py-2.5 px-3 text-right font-mono tabular-nums whitespace-nowrap text-rose-700">
+                          -{formatINR(totalVisible)}
+                        </td>
+                        <td className="py-2.5 px-3" colSpan={2} />
+                      </tr>
+                    );
+                  })()}
+                </tfoot>
+              </table>
+            </div>
           </div>
         ) : (
           <div className="space-y-2.5">
